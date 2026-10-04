@@ -152,7 +152,12 @@ function icon(name) {
 let lastData = null;
 let slidersBuilt = false;
 let rankTimer = null;
-const TOP_N = 12;
+
+// How many cards to show — follows the backend's configured TOP_MATCHES
+// (length of the `matches` array), defaulting to 12.
+function topN() {
+  return (lastData && lastData.matches && lastData.matches.length) || 12;
+}
 
 // Coarse 3-stop sliders: one notch each way from neutral.
 const SLIDER_STOPS = {
@@ -242,7 +247,7 @@ function applyRank() {
       mk.setPopupContent(popupHtml(m));
     }
   }
-  drawCards(ranked.slice(0, TOP_N));
+  drawCards(ranked.slice(0, topN()));
 }
 
 document.getElementById("weights-reset").addEventListener("click", () => {
@@ -370,7 +375,7 @@ function render(data) {
   if (!slidersBuilt) buildSliders();
   const ranked = rankPool();
   drawMap(ranked);
-  drawCards(ranked.slice(0, TOP_N));
+  drawCards(ranked.slice(0, topN()));
 }
 
 // Map layers are drawn once per search — all evaluated candidates get

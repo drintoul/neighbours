@@ -137,7 +137,7 @@ async def verify_endpoints(client: httpx.AsyncClient):
         "out 1;"
     )
 
-    async def check(url: str):
+    async def check(url: str) -> tuple[str, bool]:
         healthy = False
         try:
             await _throttle(url)
@@ -152,14 +152,22 @@ async def verify_endpoints(client: httpx.AsyncClient):
                 healthy = "remark" not in data and bool(data.get("elements"))
         except (httpx.HTTPError, ValueError):
             pass
+        return url, healthy
+
+    results = await asyncio.gather(*(check(u) for u in OVERPASS_URLS))
+    if not any(ok for _, ok in results):
+        # Everything failed — more likely our network than all mirrors being
+        # down at once. Leave them enabled; per-request circuit breakers
+        # still apply, and endpoints re-verify on the next restart.
+        print("[osm] WARNING: every Overpass mirror failed the sanity check")
+        return
+    for url, healthy in results:
         if healthy:
             _mark_success(url)
         else:
             # Effectively session-long disable — far beyond a normal cooldown.
             _endpoint_backoff[url] = time.monotonic() + 86400
             print(f"[osm] Overpass mirror failed sanity check, disabled: {url}")
-
-    await asyncio.gather(*(check(u) for u in OVERPASS_URLS))
 
 
 class GeocodeError(Exception):

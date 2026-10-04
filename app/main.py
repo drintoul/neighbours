@@ -32,10 +32,10 @@ from .similarity import haversine_km, similarity_score
 # Radius used to characterise a single neighbourhood.
 PROFILE_RADIUS_M = int(os.environ.get("PROFILE_RADIUS_M", "1500"))
 # Max candidates to profile — public Overpass quotas make bigger fan-outs slow.
-MAX_CANDIDATES = int(os.environ.get("MAX_CANDIDATES", "24"))
+MAX_CANDIDATES = int(os.environ.get("MAX_CANDIDATES", "25"))
 # Concurrent Overpass profile queries.
 CONCURRENCY = int(os.environ.get("OVERPASS_CONCURRENCY", "4"))
-TOP_MATCHES = int(os.environ.get("TOP_MATCHES", "12"))
+TOP_MATCHES = int(os.environ.get("TOP_MATCHES", "10"))
 # Base wait before retrying a failed candidate (jitter is added on top).
 RETRY_DELAY_S = float(os.environ.get("RETRY_DELAY_S", "10"))
 # Hard budget for the whole candidate-profiling stage — return partial

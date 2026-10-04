@@ -13,6 +13,16 @@ Everything runs on **free OpenStreetMap services** — no API keys, no accounts,
 no quotas to manage. Geocoding comes from **Nominatim** and point-of-interest
 data from the **Overpass API**.
 
+## Why I built this
+
+My wife and I loved our neighbourhood of Madison Park in Seattle, and later
+our neighbourhood in Saint Petersburg, Florida. When we started thinking about
+where to buy our next house, we wanted to find neighbourhoods with the same
+*feel* — the same mix of restaurants, shops, parks, and waterfront — rather
+than searching by price or square footage alone. This tool does exactly that:
+give it an address in a neighbourhood you like, and it ranks nearby
+neighbourhoods by how similar their amenity mix is.
+
 ## What does "similar" mean?
 
 Each neighbourhood is reduced to a *profile*: the number of points of interest
@@ -53,7 +63,7 @@ address ──► geocode (Nominatim)
      profile source area ──────►  discover named places
      (POI counts in ~1.5 km)      (place=suburb/neighbourhood/…)
               │                            │
-              │                    sample ≤ 24 candidates,
+              │                    sample ≤ MAX_CANDIDATES (25),
               │                    spread across distance bands
               │                            │
               ▼                            ▼
@@ -61,7 +71,7 @@ address ──► geocode (Nominatim)
               (with Overpass mirror failover + retries)
                             │
                             ▼
-              cosine similarity ──► ranked matches (top 12)
+              cosine similarity ──► ranked matches (top TOP_MATCHES, 10)
 ```
 
 In more detail:
@@ -133,9 +143,9 @@ automatically by `docker compose`. Every value also has a built-in default:
 | `OVERPASS_URLS` | three public mirrors | Comma-separated Overpass endpoints (failover) |
 | `USER_AGENT` | `neighbourhood-similarity/1.0` | Sent with all OSM requests — add your contact info |
 | `PROFILE_RADIUS_M` | `1500` | Radius that defines one neighbourhood's character |
-| `MAX_CANDIDATES` | `24` | Max candidate neighbourhoods profiled per search |
+| `MAX_CANDIDATES` | `25` | Max candidate neighbourhoods profiled per search |
 | `OVERPASS_CONCURRENCY` | `4` | Concurrent Overpass queries |
-| `TOP_MATCHES` | `12` | Matches returned/displayed |
+| `TOP_MATCHES` | `10` | Matches returned/displayed |
 | `MIN_REQUEST_INTERVAL_S` | `1.5` | Min seconds between requests to the same host |
 | `FAILOVER_DELAY_S` | `3` | Wait before a failed query retries on the next mirror |
 | `RETRY_DELAY_S` | `10` | Base wait before retrying a failed candidate (+0–4 s jitter) |
@@ -163,7 +173,7 @@ the profile cache accumulates. Delete `data/` to clear everything.
 
 ## Performance & limits
 
-- **Cold searches take 30–120 s.** Profiling ~24 candidates against rate-limited
+- **Cold searches take 30–120 s.** Profiling ~25 candidates against rate-limited
   public Overpass mirrors is the bottleneck. Larger radii and denser areas are
   slower. Subsequent searches benefit from the cache.
 - **Candidates may be skipped.** If a mirror refuses a query after retry, that
@@ -223,3 +233,7 @@ app/
   static/                # Leaflet single-page UI (vanilla JS, no build step)
 data/                    # persistent cache (gitignored, bind-mounted)
 ```
+
+## License
+
+MIT — see [LICENSE](LICENSE).
