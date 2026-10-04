@@ -1,0 +1,1 @@
+"""Neighbourhood similarity finder package."""

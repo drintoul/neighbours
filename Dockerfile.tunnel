@@ -1,0 +1,8 @@
+# cloudflared wrapper that idles when no tunnel token is configured, so the
+# tunnel service can always be part of the stack without a Compose profile.
+FROM alpine:3.20
+# Pull the cloudflared binary + CA certs straight from the official image
+# (it is scratch-based — no shell — so it can't do this check itself).
+COPY --from=cloudflare/cloudflared:2025.9.1 /usr/local/bin/cloudflared /usr/local/bin/cloudflared
+COPY --from=cloudflare/cloudflared:2025.9.1 /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+ENTRYPOINT ["/bin/sh", "-c", "if [ -z \"$TUNNEL_TOKEN\" ]; then echo 'CLOUDFLARE_TUNNEL_TOKEN not set — Cloudflare Tunnel is disabled (idling).'; exec sleep infinity; fi; exec cloudflared tunnel --no-autoupdate run"]

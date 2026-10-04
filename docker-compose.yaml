@@ -1,0 +1,58 @@
+services:
+  neighbourhood-similarity:
+    build: .
+    container_name: neighbourhood-similarity
+    ports:
+      - "${APP_PORT}:8000"
+    volumes:
+      # Local bind mount: cache data lives in ./data on the host
+      - ${DATA_DIR}:/data
+    environment:
+      # Free OSM services — no API keys needed. Override to use mirrors or
+      # self-hosted instances (recommended for heavy use).
+      NOMINATIM_URL: ${NOMINATIM_URL}
+      OVERPASS_URLS: ${OVERPASS_URLS}
+      USER_AGENT: ${USER_AGENT}
+      # Local radius used to characterise each neighbourhood
+      PROFILE_RADIUS_M: ${PROFILE_RADIUS_M}
+      # Max candidate neighbourhoods profiled per search
+      MAX_CANDIDATES: ${MAX_CANDIDATES}
+      OVERPASS_CONCURRENCY: ${OVERPASS_CONCURRENCY}
+      TOP_MATCHES: ${TOP_MATCHES}
+      DATA_DIR: /data
+      # Politeness: min seconds between requests to the same host,
+      # delay between mirror failovers, base retry wait for candidates
+      MIN_REQUEST_INTERVAL_S: ${MIN_REQUEST_INTERVAL_S}
+      FAILOVER_DELAY_S: ${FAILOVER_DELAY_S}
+      RETRY_DELAY_S: ${RETRY_DELAY_S}
+      # Skip a failed mirror for this many seconds per consecutive failure
+      FAIL_COOLDOWN_S: ${FAIL_COOLDOWN_S}
+      # When every mirror fails, pause this long before retrying them all
+      # (client shows a countdown)
+      ALL_MIRRORS_WAIT_S: ${ALL_MIRRORS_WAIT_S}
+      # Hard time caps so searches return partials/errors instead of hanging
+      PROFILE_BUDGET_S: ${PROFILE_BUDGET_S}
+      MANDATORY_BUDGET_S: ${MANDATORY_BUDGET_S}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # Optional public exposure via Cloudflare Tunnel. Always built with the
+  # stack: runs the tunnel when CLOUDFLARE_TUNNEL_TOKEN is set in .env,
+  # otherwise idles. Point the tunnel's public hostname at
+  # http://neighbourhood-similarity:8000 (service type HTTP).
+  tunnel:
+    build:
+      context: .
+      dockerfile: Dockerfile.tunnel
+    container_name: neighbourhood-tunnel
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
+    restart: unless-stopped
+    depends_on:
+      neighbourhood-similarity:
+        condition: service_healthy

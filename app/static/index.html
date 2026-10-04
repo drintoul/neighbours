@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Neighbourhood Similarity Finder</title>
+  <meta
+    name="description"
+    content="Enter an address, pick a radius, and find neighbourhoods with a similar mix of restaurants, shopping, parks, waterfront and more."
+  />
+  <!-- Social / link-preview cards (iMessage, Slack, Facebook, X) -->
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="Neighbourhood Similarity Finder" />
+  <meta
+    property="og:description"
+    content="Enter an address, pick a radius, and find neighbourhoods with a similar mix of restaurants, shopping, parks, waterfront and more."
+  />
+  <meta property="og:image" content="/static/social-card.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Neighbourhood Similarity Finder" />
+  <meta
+    name="twitter:description"
+    content="Enter an address, pick a radius, and find neighbourhoods with a similar mix of restaurants, shopping, parks, waterfront and more."
+  />
+  <meta name="twitter:image" content="/static/social-card.png" />
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
+  <link rel="icon" href="/static/favicon.ico" sizes="any" />
+  <link rel="icon" href="/static/favicon-32.png" sizes="32x32" type="image/png" />
+  <link rel="apple-touch-icon" href="/static/apple-touch-icon.png" />
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin=""
+  />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header>
+    <h1>
+      <svg class="logo" viewBox="0 0 64 64" aria-hidden="true">
+        <path d="M32 3C20.4 3 11 12.4 11 24c0 15.4 21 37 21 37s21-21.6 21-37C53 12.4 43.6 3 32 3z" fill="#2563eb"/>
+        <circle cx="32" cy="24" r="13.5" fill="#ffffff"/>
+        <path d="M32 15.5 41 23v10h-4.4v-6h-9.2v6H23V23z" fill="#2563eb"/>
+      </svg>
+      Neighbourhood Similarity Finder
+    </h1>
+    <p class="subtitle">
+      Enter an address and pick a radius — we find named neighbourhoods in that
+      area whose character most closely matches yours.
+    </p>
+    <details class="how-it-works">
+      <summary>How does it work?</summary>
+      <p>
+        We count the amenities around your address — restaurants, cafés,
+        nightlife, shopping, groceries, parks, waterfront, arts &amp; culture,
+        fitness, schools and public transit — within a ~1.5&nbsp;km
+        "neighbourhood" radius, using free OpenStreetMap data.
+      </p>
+      <p>
+        The same profile is built for a sample of neighbourhoods inside your
+        search radius, and each gets a <strong>% similarity score</strong> based
+        on how closely its <em>mix</em> of amenities resembles yours — so a
+        small town centre can still match a big city district if the proportions
+        are alike. On each result card, grey bars are your neighbourhood's
+        counts, blue bars are the match's.
+      </p>
+      <p>
+        The <strong>Feature importance</strong> sidebar lets you tune what
+        matters: every feature starts at <em>Same</em> — slide a category to
+        <em>Less</em> or <em>More</em> and results re-rank instantly, no new
+        search needed.
+      </p>
+      <p class="note">
+        Tip: you can also <strong>click anywhere on the map</strong> to use that
+        spot as your address.
+      </p>
+      <p class="note">
+        The first search can take a minute while we query open map servers;
+        results are cached afterwards. Accuracy depends on OpenStreetMap data
+        coverage, which varies by area.
+      </p>
+    </details>
+  </header>
+
+  <form id="search-form">
+    <input
+      id="address"
+      type="text"
+      placeholder="e.g. 20399 Douglas Crescent, Langley, BC"
+      required
+      autocomplete="off"
+      enterkeyhint="search"
+    />
+    <div class="radius-control">
+      <label for="radius">Radius: <span id="radius-value">25</span> km</label>
+      <input id="radius" type="range" min="1" max="50" step="1" value="25" />
+    </div>
+    <button id="search-btn" type="submit">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.5-4.5"/></svg>
+      <span class="spinner btn-spin" aria-hidden="true"></span>
+      Find similar
+    </button>
+  </form>
+
+  <div id="status"></div>
+
+  <main>
+    <aside id="weights">
+      <div class="weights-head">
+        <h2>Feature importance</h2>
+        <button id="weights-reset" type="button" title="Back to equal weights">Reset</button>
+      </div>
+      <p class="weights-note">
+        All features start equal — slide left to care less, right to care more.
+        Results re-rank instantly.
+      </p>
+      <div id="weight-sliders"></div>
+      <datalist id="weight-ticks">
+        <option value="0"></option>
+        <option value="1"></option>
+        <option value="2"></option>
+      </datalist>
+    </aside>
+    <div id="map"></div>
+    <aside id="results">
+      <div id="results-placeholder" class="placeholder">
+        Results will appear here. The first search may take up to a minute while
+        we gather open map data.
+      </div>
+    </aside>
+  </main>
+
+  <footer>
+    Data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>
+    contributors · Geocoding: Nominatim · POI data: Overpass API
+  </footer>
+
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""
+  ></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>
