@@ -116,7 +116,8 @@ async def static_revalidate(request, call_next):
 class SearchRequest(BaseModel):
     address: str = Field(min_length=2, max_length=300)
     radius_km: float = Field(default=25, ge=1, le=100)
-    # Optional per-category importance weights (0–4; 1 = neutral).
+    # Optional per-category preference weights (0–4; 1 = neutral).
+    # >1 prefers candidates with more of that category, <1 prefers less.
     weights: dict[str, float] | None = None
 
 

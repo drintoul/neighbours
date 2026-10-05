@@ -67,10 +67,11 @@ count in a leafy suburb as closely.
 Candidates are scored by **cosine similarity of log-scaled profiles**. Two
 consequences worth understanding:
 
-- **Mix, not magnitude.** `log1p` compresses big counts, so a dense city core
-  (500 restaurants) and a smaller centre (60 restaurants) still score highly if
-  the *proportions* across categories match. Similarity measures character, not
-  size.
+- **Mix dominates, magnitude counts.** `log1p` compresses big counts, so the
+  *proportions* across categories drive the score — but a large size mismatch
+  also pulls it down moderately (via the sqrt-dampened ratio of profile
+  magnitudes), so a tiny place with a similar mix won't outrank a genuinely
+  comparable neighbourhood.
 - **It reflects OSM data coverage.** Scores are only as good as the local map
   data. Well-mapped regions produce better comparisons than sparsely mapped
   ones.
@@ -135,12 +136,15 @@ search bar. Searches are shareable: the URL updates to
 ### Weighting features
 
 The **Feature importance** sidebar (left of the map) has one slider per
-category with three coarse stops: **Less** (0.5×), **Same** (1×), and
-**More** (2×) — one notch in each direction from neutral. Everything starts
-at *Same*; dragging a slider **instantly re-ranks** all evaluated candidates
-in the browser — the profile data is already local, so no new API calls are
-needed. Your settings persist across searches; **Reset** returns all sliders
-to *Same*.
+category with three coarse stops: **Less** (0.25×), **Same** (1×), and
+**More** (3×) — one notch in each direction from neutral. These express
+*preference*, not importance: **More** tilts the ranking toward candidates
+that have *more* of that feature than your area, **Less** toward those
+with less (for the negative "Industrial & nuisances" category, **More**
+prefers *fewer* nuisances). Everything starts at *Same*; dragging a slider
+**instantly re-ranks** all evaluated candidates in the browser — the
+profile data is already local, so no new API calls are needed. Your
+settings persist across searches; **Reset** returns all sliders to *Same*.
 
 ## Expose publicly with Cloudflare Tunnel
 
@@ -266,10 +270,13 @@ the profile cache accumulates. Delete `data/` to clear everything.
 
 `POST /api/search` — body: `{"address": "...", "radius_km": 25, "weights": {"parks": 2, "restaurants": 0.5}}`
 
-`weights` is optional: per-category multipliers (0–4, clamped; 1 = neutral)
-that scale each category before the cosine comparison. The response's
-`matches` are the top `TOP_MATCHES`; `evaluated` contains every scored
-candidate so clients can re-rank locally.
+`weights` is optional: per-category preference values (0–4, clamped;
+1 = neutral). Values above 1 reward candidates that exceed the source in
+that category; values below 1 reward candidates below it — implemented as
+a bounded bonus on top of the base similarity score rather than a
+re-weighting of the comparison. The response's `matches` are the top
+`TOP_MATCHES`; `evaluated` contains every scored candidate so clients can
+re-rank locally.
 
 The endpoint **streams newline-delimited JSON** (`application/x-ndjson`):
 

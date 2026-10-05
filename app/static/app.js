@@ -182,9 +182,9 @@ function topN() {
 
 // Coarse 3-stop sliders: one notch each way from neutral.
 const SLIDER_STOPS = {
-  0: { w: 0.5, label: "Less" },
+  0: { w: 0.25, label: "Less" },
   1: { w: 1, label: "Same" },
-  2: { w: 2, label: "More" },
+  2: { w: 3, label: "More" },
 };
 
 // Hover tooltips: what each category counts + what the slider does.
@@ -204,9 +204,9 @@ const CAT_TOOLTIPS = {
   transit: "Bus stops, train/tram/subway stations, ferry terminals.",
   cycling: "Cycleways, bike parking, rentals, repair shops, bike stores.",
   nuisance:
-    "Negative feature — less of it is better. 'More' penalises areas " +
-    "whose industrial footprint differs from yours. Counts industrial " +
-    "land, rail lines, aerodromes, power plants, landfills, works.",
+    "Negative feature — counts industrial land, rail lines, aerodromes, " +
+    "power plants, landfills, works. 'More' prefers areas with fewer " +
+    "of these than yours; 'Less' tolerates more.",
 };
 
 function buildSliders() {
@@ -220,7 +220,7 @@ function buildSliders() {
     row.className = "wrow" + (cat === "nuisance" ? " negative" : "");
     const tip =
       (CAT_TOOLTIPS[cat] ? CAT_TOOLTIPS[cat] + " " : "") +
-      "'More' weighs this category heavier when ranking matches; 'Less' weighs it lighter.";
+      "'More' prefers areas with more of this than your area; 'Less' prefers areas with less.";
     row.title = tip;
     row.innerHTML =
       `<div class="wlabel">${icon(cat)}<span>${escapeHtml(categoryLabels[cat] || cat)}</span><span class="wval">Same · 1×</span></div>` +
@@ -247,18 +247,37 @@ function currentWeights() {
   return w;
 }
 
-// Same scoring as the backend: cosine similarity of log-scaled,
-// weight-scaled category vectors.
+// Same scoring as the backend: base = cosine of log-scaled profiles,
+// dampened by the magnitude ratio. Sliders add a *preference* bonus —
+// "More" rewards candidates exceeding the source in that category,
+// "Less" rewards candidates below it (nuisance polarity flipped).
+const NEG_CATS = new Set(["nuisance"]);
+const SAT_K = 2.0; // log1p diff that saturates the preference (~7.4x ratio)
+const BONUS = 0.3; // max fraction of base score a preference can swing
+
 function weightedScore(src, cand, w) {
-  let dot = 0, na = 0, nb = 0;
+  let dot = 0, na = 0, nb = 0, num = 0, den = 0;
   for (const c of Object.keys(src)) {
-    const a = Math.log1p(src[c] || 0) * (w[c] ?? 1);
-    const b = Math.log1p(cand[c] || 0) * (w[c] ?? 1);
+    const a = Math.log1p(src[c] || 0);
+    const b = Math.log1p(cand[c] || 0);
     dot += a * b;
     na += a * a;
     nb += b * b;
+    const d = (w[c] ?? 1) - 1;
+    if (d) {
+      const pol = NEG_CATS.has(c) ? -1 : 1;
+      const surplus = Math.max(-1, Math.min(1, (pol * (b - a)) / SAT_K));
+      num += d * surplus;
+      den += Math.abs(d);
+    }
   }
-  return na && nb ? dot / Math.sqrt(na * nb) : 0;
+  na = Math.sqrt(na);
+  nb = Math.sqrt(nb);
+  if (!na || !nb) return 0;
+  let score =
+    (dot / (na * nb)) * Math.sqrt(Math.min(na, nb) / Math.max(na, nb));
+  if (den) score *= 1 + BONUS * (num / den);
+  return Math.min(1, Math.max(0, score));
 }
 
 function onSliderInput(e) {
@@ -323,7 +342,7 @@ function popupHtml(m, srcProfile) {
   const drive = m.drive_s
     ? ` · ~${Math.max(1, Math.round(m.drive_s / 60))} min drive`
     : "";
-  return `<b>${escapeHtml(m.name)}</b><br>${m.score}% match · ${m.distance_km} km away${drive}<div style="margin-top:6px">${rows || "No POI data"}</div>`;
+  return `<span class="popup-title">${escapeHtml(m.name)}</span><br>${m.score}% match · ${m.distance_km} km away${drive}<div style="margin-top:6px">${rows || "No POI data"}</div>`;
 }
 
 function deltaHtml(cat, s, c) {
@@ -364,7 +383,9 @@ function cardHtml(m, srcProfile, maxCount, rank, total) {
       </div>
       <div class="meta">${escapeHtml(m.place_type)} · ${m.distance_km} km away${
         m.drive_s
-          ? ` · ~${Math.max(1, Math.round(m.drive_s / 60))} min drive (${m.drive_km} km)`
+          ? ` · ~${Math.max(1, Math.round(m.drive_s / 60))} min drive${
+              m.drive_km != null ? ` (${m.drive_km} km)` : ""
+            }`
           : ""
       }</div>
       <div class="cmp">${rows}</div>
@@ -426,7 +447,11 @@ form.addEventListener("submit", async (e) => {
     const resp = await fetch("/api/search", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ address, radius_km: Number(radiusInput.value) }),
+      body: JSON.stringify({
+        address,
+        radius_km: Number(radiusInput.value),
+        weights: currentWeights(),
+      }),
       signal: controller.signal,
     });
     if (!resp.ok || !resp.body) {
@@ -564,6 +589,7 @@ function drawMap(ranked) {
       fillColor: rankColor(i, ranked.length),
       fillOpacity: 0.95,
     }).addTo(layerGroup);
+    marker.bindTooltip(escapeHtml(m.name), { direction: "top", offset: [0, -10] });
     marker.bindPopup(popupHtml(m, src.profile));
     markersByName.set(m.name, marker);
     bounds.push([m.lat, m.lon]);

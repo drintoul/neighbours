@@ -103,7 +103,8 @@ async def drive_table(
             data = await _get(
                 client,
                 url,
-                f"/table/v1/driving/{_coords(points)}?sources=0",
+                f"/table/v1/driving/{_coords(points)}"
+                "?sources=0&annotations=duration,distance",
             )
             durations = data.get("durations") or [[]]
             distances = data.get("distances") or [[]]
@@ -114,7 +115,11 @@ async def drive_table(
                 out.append(
                     None
                     if d is None
-                    else {"drive_s": round(d), "drive_km": round((m or 0) / 1000, 1)}
+                    else {
+                        "drive_s": round(d),
+                        # distance can be absent even when duration exists
+                        "drive_km": None if m is None else round(m / 1000, 1),
+                    }
                 )
             return out
         except (httpx.HTTPError, ValueError, RoutingError) as exc:
