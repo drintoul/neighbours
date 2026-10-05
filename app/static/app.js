@@ -317,7 +317,7 @@ function popupHtml(m, srcProfile) {
     .map(
       (k) =>
         `<div>${icon(k)}<strong>${escapeHtml(categoryLabels[k] || k)}:</strong> ` +
-        `${m.profile[k]} ${srcProfile ? deltaHtml(k, srcProfile[k] || 0, m.profile[k]) : ""}</div>`
+        `${srcProfile ? deltaHtml(k, srcProfile[k] || 0, m.profile[k]) : m.profile[k]}</div>`
     )
     .join("");
   const drive = m.drive_s
@@ -328,11 +328,14 @@ function popupHtml(m, srcProfile) {
 
 function deltaHtml(cat, s, c) {
   const d = c - s;
-  if (d === 0) return '<span class="counts diff same">±0</span>';
   // For nuisances, "more" is the bad direction — flip the colour.
-  const good = cat === "nuisance" ? d < 0 : d > 0;
-  return `<span class="counts diff ${good ? "good" : "bad"}">` +
-    `${d > 0 ? "+" : "−"}${Math.abs(d)}</span>`;
+  const cls = d === 0 ? "same" : (cat === "nuisance" ? d < 0 : d > 0) ? "good" : "bad";
+  let txt;
+  if (d === 0) txt = "±0";
+  // No baseline to divide by — report the raw count instead of a percentage.
+  else if (s === 0) txt = `+${d} new`;
+  else txt = `${d > 0 ? "+" : "−"}${Math.abs(Math.round((d / s) * 100))}%`;
+  return `<span class="counts diff ${cls}" title="vs your area">${txt}</span>`;
 }
 
 function cardHtml(m, srcProfile, maxCount, rank, total) {
