@@ -85,8 +85,8 @@ address ──► geocode (Nominatim)
      profile source area ──────►  discover named places
      (POI counts in ~1.5 km)      (place=suburb/neighbourhood/…)
               │                            │
-              │                    ≤ MAX_CANDIDATES (25): nearest few
-              │                    per 4 equal-width distance bands
+              │                    ≤ MAX_CANDIDATES (25): closest place
+              │                    to evenly-spaced target distances
               │                            │
               ▼                            ▼
                profile each candidate concurrently
@@ -106,10 +106,10 @@ In more detail:
    suburbs, towns, villages) inside your search radius are queried, deduplicated
    by name, and overlapping centroids are suppressed.
 4. **Candidate sampling** — selection is deterministic (no randomness): the
-   distance range from ~1 km to the farthest named place is split into **4
-   equal-width bands**, and the nearest candidates from each band are kept
-   (≈`MAX_CANDIDATES` total). That guarantees a mix of close and distant
-   neighbourhoods rather than only the closest ring.
+   distance range from ~1 km to the farthest named place is divided into
+   `MAX_CANDIDATES` evenly-spaced target distances, and the nearest place to
+   each target is kept. That spreads candidates smoothly across the radius
+   rather than clustering them at band edges or only picking the closest ring.
 5. **Candidate profiling** — each candidate gets the same POI profile, fetched
    concurrently (`OVERPASS_CONCURRENCY`) across multiple Overpass mirrors with
    automatic failover and one retry per failure.

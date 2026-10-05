@@ -307,20 +307,31 @@ function rankPool() {
     .sort((a, b) => b.score - a.score);
 }
 
+// Tied scores share the colour of their best rank — a boundary tie can't
+// show two colours for identical scores.
+function scoreColors(ranked) {
+  const colors = new Map();
+  ranked.forEach((m, i) => {
+    if (!colors.has(m.score)) colors.set(m.score, rankColor(i, ranked.length));
+  });
+  return colors;
+}
+
 function applyRank() {
   if (!lastData) return;
   const ranked = rankPool();
+  const colors = scoreColors(ranked);
   // Update existing markers in place — no layer rebuild, no fitBounds,
   // so the map view and any open popup stay put while dragging.
-  for (const [i, m] of ranked.entries()) {
+  for (const m of ranked) {
     const mk = markersByName.get(m.name);
     if (mk) {
-      mk.setStyle({ fillColor: rankColor(i, ranked.length) });
+      mk.setStyle({ fillColor: colors.get(m.score) });
       mk.setTooltipContent(`${escapeHtml(m.name)} — ${m.score}%`);
       mk.setPopupContent(popupHtml(m, lastData.source.profile));
     }
   }
-  drawCards(ranked.slice(0, topN()));
+  drawCards(ranked.slice(0, topN()), colors);
 }
 
 document.getElementById("weights-reset").addEventListener("click", () => {
@@ -364,7 +375,7 @@ function deltaHtml(cat, s, c) {
   return `<span class="counts diff ${cls}" title="vs your area">${txt}</span>`;
 }
 
-function cardHtml(m, srcProfile, maxCount, rank, total) {
+function cardHtml(m, srcProfile, maxCount, color) {
   const cats = Object.keys(categoryLabels).length
     ? Object.keys(categoryLabels)
     : Object.keys(srcProfile);
@@ -386,7 +397,7 @@ function cardHtml(m, srcProfile, maxCount, rank, total) {
     <div class="card" data-name="${escapeHtml(m.name)}">
       <div class="card-head">
         <h3>${escapeHtml(m.name)}</h3>
-        <span class="score-badge" style="background:${rankColor(rank, total)}">${m.score}%</span>
+        <span class="score-badge" style="background:${color}">${m.score}%</span>
       </div>
       <div class="meta">${escapeHtml(m.place_type)} · ${m.distance_km} km away${
         m.drive_s
@@ -531,7 +542,7 @@ function render(data) {
   if (!slidersBuilt) buildSliders();
   const ranked = rankPool();
   drawMap(ranked);
-  drawCards(ranked.slice(0, topN()));
+  drawCards(ranked.slice(0, topN()), scoreColors(ranked));
 }
 
 // Driving route preview for the clicked match — drawn over everything else.
@@ -588,12 +599,13 @@ function drawMap(ranked) {
   srcMarker.bindPopup(`<b>${escapeHtml(src.name)}</b><br>${escapeHtml(src.display_name)}`);
   bounds.push([src.lat, src.lon]);
 
-  for (const [i, m] of ranked.entries()) {
+  const colors = scoreColors(ranked);
+  for (const m of ranked) {
     const marker = L.circleMarker([m.lat, m.lon], {
       radius: 9,
       color: "#fff",
       weight: 2,
-      fillColor: rankColor(i, ranked.length),
+      fillColor: colors.get(m.score),
       fillOpacity: 0.95,
     }).addTo(layerGroup);
     marker.bindTooltip(`${escapeHtml(m.name)} — ${m.score}%`, { direction: "top", offset: [0, -10] });
@@ -606,7 +618,7 @@ function drawMap(ranked) {
 }
 
 // Results panel cards — rebuilt on every rank change.
-function drawCards(top) {
+function drawCards(top, colors) {
   const data = lastData;
   if (!top.length) {
     resultsEl.innerHTML = '<div class="placeholder">No named neighbourhoods found in this radius.</div>';
@@ -637,13 +649,7 @@ function drawCards(top) {
      </div>` +
     top
       .map((m, i) =>
-        cardHtml(
-          m,
-          data.source.profile,
-          maxCount,
-          i,
-          (data.evaluated && data.evaluated.length) || top.length
-        )
+        cardHtml(m, data.source.profile, maxCount, colors.get(m.score))
       )
       .join("");
 

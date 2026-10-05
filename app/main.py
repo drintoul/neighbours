@@ -160,7 +160,7 @@ async def reverse(lat: float, lon: float):
 
 
 def _pick_candidates(places: list[dict], lat: float, lon: float, max_n: int) -> list[dict]:
-    """Dedupe and pick a distance-stratified, spatially spread sample."""
+    """Dedupe and pick a spatially spread sample at evenly-spaced distances."""
     seen_names: set[str] = set()
     unique: list[dict] = []
     for p in places:
@@ -185,43 +185,32 @@ def _pick_candidates(places: list[dict], lat: float, lon: float, max_n: int) -> 
         ):
             spread.append(p)
 
-    # Stratified sampling across distance bands keeps near AND far
-    # candidates — each band keeps its own quota; only genuinely leftover
-    # slots get filled with the nearest remaining places.
+    # Evenly-spaced target distances across the radius — picking the
+    # nearest place to each target spreads candidates smoothly instead of
+    # clustering them at distance-band edges.
     if len(spread) <= max_n:
         return spread
-    bands = 4
-    per_band = max(1, max_n // bands)
     max_d = spread[-1]["distance_km"] or 1
     picked: list[dict] = []
     chosen: set[int] = set()
-    for b in range(bands):
-        lo, hi = max_d * b / bands, max_d * (b + 1) / bands
-        taken = 0
-        for p in spread:
-            if taken >= per_band:
-                break
-            if id(p) in chosen or not (lo <= p["distance_km"] <= hi):
-                continue
-            if any(
-                haversine_km(p["lat"], p["lon"], q["lat"], q["lon"]) <= 1.2
+    for i in range(max_n):
+        target = max_d * (i + 1) / (max_n + 1)
+        by_gap = sorted(
+            (p for p in spread if id(p) not in chosen),
+            key=lambda p: abs(p["distance_km"] - target),
+        )
+        if not by_gap:
+            break
+        for p in by_gap:
+            if all(
+                haversine_km(p["lat"], p["lon"], q["lat"], q["lon"]) > 1.2
                 for q in picked
             ):
-                continue
-            picked.append(p)
-            chosen.add(id(p))
-            taken += 1
-    for p in spread:
-        if len(picked) >= max_n:
-            break
-        if id(p) in chosen:
-            continue
-        if all(
-            haversine_km(p["lat"], p["lon"], q["lat"], q["lon"]) > 1.2
-            for q in picked
-        ):
-            picked.append(p)
-            chosen.add(id(p))
+                break
+        else:
+            p = by_gap[0]  # all near-target options suppressed — take the closest
+        picked.append(p)
+        chosen.add(id(p))
     return picked
 
 
