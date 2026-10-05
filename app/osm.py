@@ -452,7 +452,12 @@ async def overpass_query(
 
 
 async def find_places(lat: float, lon: float, radius_m: int, client: httpx.AsyncClient) -> list[dict]:
-    """Find named neighbourhoods/suburbs/towns near a point within radius_m."""
+    """Find named neighbourhoods/suburbs/towns near a point within radius_m.
+
+    The output cap must stay generous — a truncated result set is biased
+    toward nearby places, which silently shrinks the effective radius at
+    50–100 km since distance bands sample to the farthest returned place.
+    """
     place_re = "neighbourhood|suburb|quarter|city_district|borough|town|village|hamlet|residential"
     query = f"""
 [out:json][timeout:60];
@@ -461,7 +466,7 @@ async def find_places(lat: float, lon: float, radius_m: int, client: httpx.Async
   way["place"~"{place_re}"](around:{radius_m},{lat},{lon});
   relation["place"~"{place_re}"](around:{radius_m},{lat},{lon});
 );
-out center 250;
+out center 5000;
 """
     data = await overpass_query(query, client, point=(lat, lon))
     places = []

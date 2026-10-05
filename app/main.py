@@ -185,37 +185,54 @@ def _pick_candidates(places: list[dict], lat: float, lon: float, max_n: int) -> 
         ):
             spread.append(p)
 
-    # Stratified sampling across distance bands keeps near AND far candidates.
+    # Stratified sampling across distance bands keeps near AND far
+    # candidates — each band keeps its own quota; only genuinely leftover
+    # slots get filled with the nearest remaining places.
     if len(spread) <= max_n:
         return spread
     bands = 4
     per_band = max(1, max_n // bands)
-    picked: list[dict] = []
     max_d = spread[-1]["distance_km"] or 1
+    picked: list[dict] = []
+    chosen: set[int] = set()
     for b in range(bands):
         lo, hi = max_d * b / bands, max_d * (b + 1) / bands
-        band = [p for p in spread if lo <= p["distance_km"] <= hi]
-        picked.extend(band[:per_band])
-    if len(picked) < max_n:
-        chosen = {id(p) for p in picked}
-        picked.extend(p for p in spread if id(p) not in chosen)
-    # Final spatial dedupe, then cap.
-    final: list[dict] = []
-    for p in sorted(picked, key=lambda p: p["distance_km"])[: max_n * 2]:
-        if all(haversine_km(p["lat"], p["lon"], q["lat"], q["lon"]) > 1.2 for q in final):
-            final.append(p)
-        if len(final) >= max_n:
+        taken = 0
+        for p in spread:
+            if taken >= per_band:
+                break
+            if id(p) in chosen or not (lo <= p["distance_km"] <= hi):
+                continue
+            if any(
+                haversine_km(p["lat"], p["lon"], q["lat"], q["lon"]) <= 1.2
+                for q in picked
+            ):
+                continue
+            picked.append(p)
+            chosen.add(id(p))
+            taken += 1
+    for p in spread:
+        if len(picked) >= max_n:
             break
-    return final
+        if id(p) in chosen:
+            continue
+        if all(
+            haversine_km(p["lat"], p["lon"], q["lat"], q["lon"]) > 1.2
+            for q in picked
+        ):
+            picked.append(p)
+            chosen.add(id(p))
+    return picked
 
 
-# Bump when the POI query or category definitions change — invalidates
-# cached profiles built under the old query instead of serving stale ones.
-PROFILE_CACHE_VERSION = "v2"
+# Bump when the POI/place queries or category definitions change —
+# invalidates cached data built under the old queries instead of serving
+# stale results for the whole TTL.
+CACHE_VERSION = "v2"
 
 
 async def _profile_for(lat: float, lon: float, client: httpx.AsyncClient) -> dict:
-    key = (PROFILE_CACHE_VERSION, round(lat, 3), round(lon, 3))
+    key = (CACHE_VERSION, round(lat, 3), round(lon, 3))
     cached = _profile_cache.get(key)
     if cached is not None:
         return cached
@@ -309,7 +326,7 @@ async def _run_search(req: SearchRequest):
             message=f"Found {geo['name']} — profiling it and finding named "
             f"neighbourhoods within {req.radius_km:g} km…",
         )
-        places_key = (round(lat, 3), round(lon, 3), radius_m)
+        places_key = (CACHE_VERSION, round(lat, 3), round(lon, 3), radius_m)
         places = _places_cache.get(places_key)
 
         async def _discover():
