@@ -621,7 +621,8 @@ function drawCards(top) {
   resultsEl.innerHTML =
     srcCardHtml(data.source, maxCount) +
     `<div class="legend">
-       ${data.candidates_evaluated} of ${data.candidates_found} neighbourhoods evaluated ·
+       ${data.candidates_found} neighbourhoods found ·
+       ${data.candidates_evaluated} profiled ·
        top ${top.length} shown${data.partial ? " · partial (time limit)" : ""}
      </div>
      <div class="legend sublegend">
