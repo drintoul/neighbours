@@ -617,13 +617,22 @@ function drawCards(top) {
     ...top.flatMap((m) => Object.values(m.profile)),
     ...Object.values(data.source.profile)
   );
+  const profKm = (data.profile_radius_m / 1000).toFixed(1).replace(/\.0$/, "");
   resultsEl.innerHTML =
     srcCardHtml(data.source, maxCount) +
     `<div class="legend">
        ${data.candidates_evaluated} of ${data.candidates_found} neighbourhoods evaluated ·
-       top ${top.length} shown${data.partial ? " · partial (time limit)" : ""} ·
+       top ${top.length} shown${data.partial ? " · partial (time limit)" : ""}
+     </div>
+     <div class="legend sublegend">
        <span class="swatch" style="background:#94a3b8"></span>yours
        <span class="swatch" style="background:#2563eb"></span>match
+     </div>
+     <div class="legend sublegend">
+       Each row shows amenity counts within ${profKm} km of that area's centre.
+     </div>
+     <div class="legend sublegend">
+       Hover a <em>Feature importance</em> slider to see what each category counts.
      </div>` +
     top
       .map((m, i) =>

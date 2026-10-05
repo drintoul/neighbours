@@ -382,11 +382,17 @@ main {
   margin: 0 0 10px;
 }
 
+.legend.sublegend {
+  margin: -6px 0 10px;
+  color: #6b7a8d;
+}
+
 .legend .swatch {
   display: inline-block;
-  width: 10px; height: 8px;
+  width: 16px; height: 5px;
   border-radius: 3px;
   margin: 0 4px 0 10px;
+  vertical-align: middle;
 }
 
 footer {
