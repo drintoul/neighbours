@@ -12,18 +12,38 @@ import httpx
 
 NOMINATIM_URL = os.environ.get("NOMINATIM_URL", "https://nominatim.openstreetmap.org")
 
-OVERPASS_URLS = [
-    u.strip()
-    for u in os.environ.get(
+def _parse_overpass_endpoints() -> list[tuple[str, list[tuple] | None, set]]:
+    """OVERPASS_URLS entries are comma-separated; each may carry coverage
+    hints as `|bbox:w:s:e:n` (repeatable) and a `|nolimit` flag. An endpoint
+    with bboxes is only used for queries whose point falls inside one — this
+    keeps a self-hosted regional instance from silently answering
+    out-of-region queries with empty data. `nolimit` skips the per-host
+    throttle — meant for self-hosted instances serving only us."""
+    endpoints = []
+    for entry in os.environ.get(
         "OVERPASS_URLS",
         "https://overpass-api.de/api/interpreter,"
         "https://overpass.osm.ch/api/interpreter,"
         "https://overpass.kumi.systems/api/interpreter,"
         "https://overpass.private.coffee/api/interpreter,"
         "https://overpass.openstreetmap.fr/api/interpreter",
-    ).split(",")
-    if u.strip()
-]
+    ).split(","):
+        parts = entry.strip().split("|")
+        if not parts[0]:
+            continue
+        boxes = [
+            tuple(float(v) for v in p[5:].split(":"))
+            for p in parts[1:]
+            if p.startswith("bbox:")
+        ]
+        flags = {p for p in parts[1:] if not p.startswith("bbox:")}
+        endpoints.append((parts[0], boxes or None, flags))
+    return endpoints
+
+
+OVERPASS_ENDPOINTS = _parse_overpass_endpoints()
+OVERPASS_URLS = [u for u, _, _ in OVERPASS_ENDPOINTS]
+_NO_THROTTLE = {u for u, _, flags in OVERPASS_ENDPOINTS if "nolimit" in flags}
 
 USER_AGENT = os.environ.get(
     "USER_AGENT", "neighbourhood-similarity/1.0 (https://devin.ai)"
@@ -81,7 +101,9 @@ async def _global_pause():
         try:
             notify = _wait_notify.get()
             if notify:
-                await notify(ALL_MIRRORS_WAIT_S)
+                res = notify(ALL_MIRRORS_WAIT_S)
+                if asyncio.iscoroutine(res):
+                    await res
             await asyncio.sleep(ALL_MIRRORS_WAIT_S)
         finally:
             _retry_gate.set()
@@ -114,12 +136,47 @@ async def _throttle(host_key: str):
         _last_request_at[host_key] = time.monotonic()
 
 
-async def _next_overpass_url() -> str:
+async def _next_overpass_url(pool: list[str]) -> str:
     global _endpoint_index
     async with _endpoint_lock:
-        url = OVERPASS_URLS[_endpoint_index % len(OVERPASS_URLS)]
+        url = pool[_endpoint_index % len(pool)]
         _endpoint_index += 1
         return url
+
+
+def _endpoints_for(point: tuple[float, float] | None) -> list[str]:
+    """Endpoints eligible for a query — filtered by coverage bbox when the
+    query's lat/lon is known."""
+    if point is None:
+        return list(OVERPASS_URLS)
+    lat, lon = point
+    return [
+        url
+        for url, boxes, _ in OVERPASS_ENDPOINTS
+        if boxes is None
+        or any(b[0] <= lon <= b[2] and b[1] <= lat <= b[3] for b in boxes)
+    ]
+
+
+async def regional_data_timestamp(client: httpx.AsyncClient) -> str | None:
+    """osm_base timestamp of the first regional (bbox-tagged) endpoint —
+    i.e. when the self-hosted data was last built from OSM. None if no
+    regional endpoint is configured or reachable."""
+    for url, boxes, _ in OVERPASS_ENDPOINTS:
+        if boxes is None:
+            continue
+        base = url.rsplit("/api/", 1)[0]
+        try:
+            resp = await client.get(
+                f"{base}/api/timestamp",
+                headers={"User-Agent": USER_AGENT},
+                timeout=10,
+            )
+            if resp.status_code == 200 and resp.text.strip():
+                return resp.text.strip()
+        except httpx.HTTPError:
+            continue
+    return None
 
 
 async def verify_endpoints(client: httpx.AsyncClient):
@@ -129,18 +186,20 @@ async def verify_endpoints(client: httpx.AsyncClient):
     no error — which is indistinguishable from a legitimately empty rural
     query and silently poisons cached profiles. Probe each mirror against a
     guaranteed-dense point; one returning zero elements gets disabled for
-    the session.
+    the session. The point is downtown Seattle — inside the self-hosted
+    instance's BC/WA/FL coverage, so it works for local and public mirrors.
     """
     probe = (
         '[out:json][timeout:20];'
-        'node["amenity"="cafe"](around:400,40.758,-73.9855);'
+        'node["amenity"="cafe"](around:400,47.6062,-122.3321);'
         "out 1;"
     )
 
     async def check(url: str) -> tuple[str, bool]:
         healthy = False
         try:
-            await _throttle(url)
+            if url not in _NO_THROTTLE:
+                await _throttle(url)
             resp = await client.post(
                 url,
                 data={"data": probe},
@@ -330,15 +389,22 @@ async def reverse_geocode(lat: float, lon: float, client: httpx.AsyncClient) -> 
     }
 
 
-async def overpass_query(query: str, client: httpx.AsyncClient) -> dict:
+async def overpass_query(
+    query: str, client: httpx.AsyncClient, point: tuple[float, float] | None = None
+) -> dict:
     """Run an Overpass QL query across configured mirrors.
 
     Endpoints in circuit-breaker cooldown are skipped — a mirror that just
     timed out stops burning the full request timeout on every candidate.
+    `point` (lat, lon) limits the failover pool to endpoints whose coverage
+    bboxes contain it.
     """
+    pool = _endpoints_for(point)
+    if not pool:
+        raise OverpassError("No Overpass endpoint covers this area")
     urls: list[str] = []
-    for _ in range(len(OVERPASS_URLS)):
-        url = await _next_overpass_url()
+    for _ in range(len(pool)):
+        url = await _next_overpass_url(pool)
         if url not in urls:
             urls.append(url)
 
@@ -357,7 +423,8 @@ async def overpass_query(query: str, client: httpx.AsyncClient) -> dict:
             if i > 0:
                 # Give the previous mirror a moment before moving on.
                 await asyncio.sleep(FAILOVER_DELAY_S)
-            await _throttle(url)
+            if url not in _NO_THROTTLE:
+                await _throttle(url)
             try:
                 resp = await client.post(
                     url,
@@ -396,7 +463,7 @@ async def find_places(lat: float, lon: float, radius_m: int, client: httpx.Async
 );
 out center 250;
 """
-    data = await overpass_query(query, client)
+    data = await overpass_query(query, client, point=(lat, lon))
     places = []
     for el in data.get("elements", []):
         tags = el.get("tags", {})
@@ -427,15 +494,19 @@ async def fetch_pois(lat: float, lon: float, radius_m: int, client: httpx.AsyncC
   nwr["amenity"](around:{radius_m},{lat},{lon});
   nwr["shop"](around:{radius_m},{lat},{lon});
   nwr["leisure"](around:{radius_m},{lat},{lon});
-  nwr["tourism"~"museum|gallery|attraction|theme_park|zoo|aquarium|artwork"](around:{radius_m},{lat},{lon});
+  nwr["tourism"~"museum|gallery|attraction|theme_park|zoo|aquarium|artwork|hotel|hostel|guest_house|motel"](around:{radius_m},{lat},{lon});
   nwr["natural"~"water|coastline|beach|bay|wood|scrub|grassland"](around:{radius_m},{lat},{lon});
   nwr["waterway"](around:{radius_m},{lat},{lon});
-  nwr["landuse"~"recreation_ground|village_green|grass|forest|meadow"](around:{radius_m},{lat},{lon});
+  nwr["landuse"~"recreation_ground|village_green|grass|forest|meadow|industrial|landfill|quarry|brownfield"](around:{radius_m},{lat},{lon});
+  nwr["aeroway"~"aerodrome|helipad"](around:{radius_m},{lat},{lon});
+  nwr["man_made"~"works|wastewater_plant"](around:{radius_m},{lat},{lon});
+  nwr["power"~"plant"](around:{radius_m},{lat},{lon});
+  nwr["healthcare"](around:{radius_m},{lat},{lon});
   nwr["public_transport"](around:{radius_m},{lat},{lon});
-  nwr["railway"~"station|tram_stop|halt|subway_entrance"](around:{radius_m},{lat},{lon});
-  nwr["highway"~"bus_stop"](around:{radius_m},{lat},{lon});
+  nwr["railway"~"station|tram_stop|halt|subway_entrance|rail"](around:{radius_m},{lat},{lon});
+  nwr["highway"~"bus_stop|cycleway"](around:{radius_m},{lat},{lon});
 );
 out tags 40000;
 """
-    data = await overpass_query(query, client)
+    data = await overpass_query(query, client, point=(lat, lon))
     return data.get("elements", [])

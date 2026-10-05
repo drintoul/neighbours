@@ -20,6 +20,13 @@ fetch("/api/categories")
   .then((d) => {
     categoryLabels = d.categories;
     if (!slidersBuilt) buildSliders();
+    if (d.data_as_of) {
+      const el = document.getElementById("data-asof");
+      const date = new Date(d.data_as_of);
+      if (el && !isNaN(date)) {
+        el.textContent = `, updated ${date.toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" })}`;
+      }
+    }
   })
   .catch(() => {});
 
@@ -95,22 +102,23 @@ function setStatusLoading(msg) {
   statusEl.classList.remove("error");
 }
 
-// Live countdown while the backend pauses before retrying failed mirrors.
+// Live countdown — used for mirror-wait retries and 429 auto-retries.
 let waitTimer = null;
-function showWaitCountdown(seconds) {
+function showWaitCountdown(
+  seconds,
+  prefix = "All map data servers are busy — retrying in",
+  doneMsg = "Retrying map data servers…"
+) {
   clearInterval(waitTimer);
   let remaining = seconds;
-  const paint = () =>
-    setStatusLoading(
-      `All map data servers are busy — retrying in ${remaining}s…`
-    );
+  const paint = () => setStatusLoading(`${prefix} ${remaining}s…`);
   paint();
   waitTimer = setInterval(() => {
     remaining -= 1;
     if (remaining <= 0) {
       clearInterval(waitTimer);
       waitTimer = null;
-      setStatusLoading("Retrying map data servers…");
+      setStatusLoading(doneMsg);
       return;
     }
     paint();
@@ -121,10 +129,16 @@ function clearWaitCountdown() {
   waitTimer = null;
 }
 
-function scoreColor(score) {
-  // 0 -> red, 100 -> green
-  const hue = Math.round(score * 1.2);
-  return `hsl(${hue}, 70%, 42%)`;
+function rankColor(i, n) {
+  // Colour by rank within this result set — absolute score thresholds leave
+  // every dot green when matches cluster at 90%+. Fractions of the ranked
+  // list always spread: ~top 15% green, next ~35% yellow/gold, next ~30%
+  // orange, tail grey.
+  const t = n <= 1 ? 0 : i / n;
+  if (t < 0.15) return "#16a34a"; // green — top tier
+  if (t < 0.5) return "#ca8a04"; // yellow/gold — 2nd tier
+  if (t < 0.8) return "#ea580c"; // orange — 3rd tier
+  return "#64748b"; // slate grey — weakest candidates
 }
 
 // Minimal stroke icons per category (24x24, Lucide-style)
@@ -140,6 +154,10 @@ const ICONS = {
   fitness: "m6.5 6.5 11 11M21 21l-1-1M3 3l1 1M18 22l4-4M2 6l4-4M3 10l7-7M14 21l7-7",
   schools: "M2 9l10-5 10 5-10 5zM6 11.5V16c0 1.7 2.7 3 6 3s6-1.3 6-3v-4.5M22 9v5",
   transit: "M4 6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1zM4 11h16M8 15h.01M16 15h.01M7 20v-3M17 20v-3",
+  lodging: "M3 20V6M3 14h18v6M3 20h18M8 14v-3h6v3",
+  healthcare: "M9 3h6v6h6v6h-6v6H9v-6H3V9h6z",
+  cycling: "M5.5 21a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zm13 0a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM5.5 17.5 9 9h5l4.5 8.5M9 9l2-4h3",
+  nuisance: "M4 21V9.5L10 14V9.5L16 14V5h4v16zM2 21h20",
 };
 
 function icon(name) {
@@ -166,6 +184,28 @@ const SLIDER_STOPS = {
   2: { w: 2, label: "More" },
 };
 
+// Hover tooltips: what each category counts + what the slider does.
+const CAT_TOOLTIPS = {
+  restaurants: "Restaurants, fast food, food courts, food halls.",
+  cafes: "Cafés, coffee shops, ice cream parlours.",
+  nightlife: "Bars, pubs, nightclubs, biergartens.",
+  shopping: "Shops of every kind except grocery-type stores and bike shops.",
+  groceries: "Supermarkets, bakeries, greengrocers, delis, markets.",
+  lodging: "Hotels, hostels, guest houses, motels — touristy vs residential.",
+  healthcare: "Hospitals, clinics, pharmacies, dentists, doctors.",
+  schools: "Schools, kindergartens, universities, childcare.",
+  parks: "Parks, gardens, playgrounds, woods, meadows, green space.",
+  waterfront: "Beaches, coastline, bays, rivers, lakes, marinas.",
+  culture: "Cinemas, theatres, museums, galleries, libraries, artwork.",
+  fitness: "Gyms, pools, pitches, courts, golf courses, sports centres.",
+  transit: "Bus stops, train/tram/subway stations, ferry terminals.",
+  cycling: "Cycleways, bike parking, rentals, repair shops, bike stores.",
+  nuisance:
+    "Negative feature — less of it is better. 'More' penalises areas " +
+    "whose industrial footprint differs from yours. Counts industrial " +
+    "land, rail lines, aerodromes, power plants, landfills, works.",
+};
+
 function buildSliders() {
   const host = document.getElementById("weight-sliders");
   host.innerHTML = "";
@@ -174,7 +214,11 @@ function buildSliders() {
     : Object.keys(ICONS);
   for (const cat of cats) {
     const row = document.createElement("div");
-    row.className = "wrow";
+    row.className = "wrow" + (cat === "nuisance" ? " negative" : "");
+    const tip =
+      (CAT_TOOLTIPS[cat] ? CAT_TOOLTIPS[cat] + " " : "") +
+      "'More' weighs this category heavier when ranking matches; 'Less' weighs it lighter.";
+    row.title = tip;
     row.innerHTML =
       `<div class="wlabel">${icon(cat)}<span>${escapeHtml(categoryLabels[cat] || cat)}</span><span class="wval">Same · 1×</span></div>` +
       `<input type="range" class="wslider" data-cat="${cat}" min="0" max="2" step="1" value="1" list="weight-ticks">`;
@@ -240,11 +284,11 @@ function applyRank() {
   const ranked = rankPool();
   // Update existing markers in place — no layer rebuild, no fitBounds,
   // so the map view and any open popup stay put while dragging.
-  for (const m of ranked) {
+  for (const [i, m] of ranked.entries()) {
     const mk = markersByName.get(m.name);
     if (mk) {
-      mk.setStyle({ fillColor: scoreColor(m.score) });
-      mk.setPopupContent(popupHtml(m));
+      mk.setStyle({ fillColor: rankColor(i, ranked.length) });
+      mk.setPopupContent(popupHtml(m, lastData.source.profile));
     }
   }
   drawCards(ranked.slice(0, topN()));
@@ -264,18 +308,31 @@ function escapeHtml(s) {
   }[c]));
 }
 
-function popupHtml(m) {
+function popupHtml(m, srcProfile) {
   const rows = Object.keys(m.profile)
-    .filter((k) => m.profile[k] > 0)
+    .filter((k) => m.profile[k] > 0 || (srcProfile && srcProfile[k] > 0))
     .map(
       (k) =>
-        `<div>${icon(k)}<strong>${escapeHtml(categoryLabels[k] || k)}:</strong> ${m.profile[k]}</div>`
+        `<div>${icon(k)}<strong>${escapeHtml(categoryLabels[k] || k)}:</strong> ` +
+        `${m.profile[k]} ${srcProfile ? deltaHtml(k, srcProfile[k] || 0, m.profile[k]) : ""}</div>`
     )
     .join("");
-  return `<b>${escapeHtml(m.name)}</b><br>${m.score}% match · ${m.distance_km} km away<div style="margin-top:6px">${rows || "No POI data"}</div>`;
+  const drive = m.drive_s
+    ? ` · ~${Math.max(1, Math.round(m.drive_s / 60))} min drive`
+    : "";
+  return `<b>${escapeHtml(m.name)}</b><br>${m.score}% match · ${m.distance_km} km away${drive}<div style="margin-top:6px">${rows || "No POI data"}</div>`;
 }
 
-function cardHtml(m, srcProfile, maxCount) {
+function deltaHtml(cat, s, c) {
+  const d = c - s;
+  if (d === 0) return '<span class="counts diff same">±0</span>';
+  // For nuisances, "more" is the bad direction — flip the colour.
+  const good = cat === "nuisance" ? d < 0 : d > 0;
+  return `<span class="counts diff ${good ? "good" : "bad"}">` +
+    `${d > 0 ? "+" : "−"}${Math.abs(d)}</span>`;
+}
+
+function cardHtml(m, srcProfile, maxCount, rank, total) {
   const cats = Object.keys(categoryLabels).length
     ? Object.keys(categoryLabels)
     : Object.keys(srcProfile);
@@ -289,7 +346,7 @@ function cardHtml(m, srcProfile, maxCount) {
         <div class="bars">
           <span class="bar src" style="width:${Math.round((s / scale) * 60)}px"></span>
           <span class="bar cand" style="width:${Math.round((c / scale) * 60)}px"></span>
-          <span class="counts">${s} → ${c}</span>
+          ${deltaHtml(k, s, c)}
         </div>`;
     })
     .join("");
@@ -297,9 +354,13 @@ function cardHtml(m, srcProfile, maxCount) {
     <div class="card" data-name="${escapeHtml(m.name)}">
       <div class="card-head">
         <h3>${escapeHtml(m.name)}</h3>
-        <span class="score-badge" style="background:${scoreColor(m.score)}">${m.score}%</span>
+        <span class="score-badge" style="background:${rankColor(rank, total)}">${m.score}%</span>
       </div>
-      <div class="meta">${escapeHtml(m.place_type)} · ${m.distance_km} km away</div>
+      <div class="meta">${escapeHtml(m.place_type)} · ${m.distance_km} km away${
+        m.drive_s
+          ? ` · ~${Math.max(1, Math.round(m.drive_s / 60))} min drive (${m.drive_km} km)`
+          : ""
+      }</div>
       <div class="cmp">${rows}</div>
     </div>`;
 }
@@ -308,6 +369,14 @@ form.addEventListener("submit", async (e) => {
   e.preventDefault();
   const address = addressInput.value.trim();
   if (!address) return;
+
+  // Reflect the search in the URL so results can be shared/bookmarked.
+  history.replaceState(
+    null,
+    "",
+    "?" +
+      new URLSearchParams({ address, radius: radiusInput.value }).toString()
+  );
 
   searchBtn.disabled = true;
   searchBtn.classList.add("loading");
@@ -327,6 +396,21 @@ form.addEventListener("submit", async (e) => {
     });
     if (!resp.ok || !resp.body) {
       const err = await resp.json().catch(() => ({}));
+      if (resp.status === 429) {
+        // Server says exactly when the rolling window frees up — count down
+        // and resubmit automatically. Re-entrant resubmit happens after this
+        // frame's finally runs, keeping button/timer state clean.
+        const waitS =
+          Math.min(parseInt(resp.headers.get("retry-after") || "65", 10) + 1, 130);
+        showWaitCountdown(
+          waitS,
+          "Rate limit — one search per minute. Retrying in",
+          "Retrying search…"
+        );
+        await new Promise((r) => setTimeout(r, waitS * 1000));
+        setTimeout(() => form.requestSubmit(), 0);
+        return;
+      }
       throw new Error(err.detail || `HTTP ${resp.status}`);
     }
 
@@ -359,7 +443,12 @@ form.addEventListener("submit", async (e) => {
     render(finalData);
     clearStatus();
   } catch (err) {
-    const msg = err.name === "AbortError" ? "Request timed out." : err.message;
+    const msg =
+      err.name === "AbortError"
+        ? "Request timed out."
+        : /stream|network|terminated|aborted/i.test(err.message || "")
+        ? "Connection to the server was interrupted — please try again."
+        : err.message;
     setStatus(msg, true);
     resultsEl.innerHTML = '<div class="placeholder">Search failed — see message above.</div>';
   } finally {
@@ -378,10 +467,32 @@ function render(data) {
   drawCards(ranked.slice(0, topN()));
 }
 
+// Driving route preview for the clicked match — drawn over everything else.
+let routeLayer = null;
+
+async function showRoute(m) {
+  const src = lastData && lastData.source;
+  if (!src) return;
+  try {
+    const r = await fetch(
+      `/api/route?from_lat=${src.lat}&from_lon=${src.lon}` +
+        `&to_lat=${m.lat}&to_lon=${m.lon}`
+    );
+    if (!r.ok) return;
+    const d = await r.json();
+    if (routeLayer) layerGroup.removeLayer(routeLayer);
+    routeLayer = L.geoJSON(d.geometry, {
+      style: { color: "#7c3aed", weight: 3, opacity: 0.75 },
+    }).addTo(layerGroup);
+    map.fitBounds(routeLayer.getBounds().pad(0.12));
+  } catch {}
+}
+
 // Map layers are drawn once per search — all evaluated candidates get
 // markers, coloured by their current score.
 function drawMap(ranked) {
   layerGroup.clearLayers();
+  routeLayer = null;
   markersByName.clear();
 
   const data = lastData;
@@ -410,15 +521,15 @@ function drawMap(ranked) {
   srcMarker.bindPopup(`<b>${escapeHtml(src.name)}</b><br>${escapeHtml(src.display_name)}`);
   bounds.push([src.lat, src.lon]);
 
-  for (const m of ranked) {
+  for (const [i, m] of ranked.entries()) {
     const marker = L.circleMarker([m.lat, m.lon], {
       radius: 9,
       color: "#fff",
       weight: 2,
-      fillColor: scoreColor(m.score),
+      fillColor: rankColor(i, ranked.length),
       fillOpacity: 0.95,
     }).addTo(layerGroup);
-    marker.bindPopup(popupHtml(m));
+    marker.bindPopup(popupHtml(m, src.profile));
     markersByName.set(m.name, marker);
     bounds.push([m.lat, m.lon]);
   }
@@ -445,8 +556,19 @@ function drawCards(top) {
        <span class="swatch" style="background:#94a3b8"></span>yours
        <span class="swatch" style="background:#2563eb"></span>match
      </div>` +
-    top.map((m) => cardHtml(m, data.source.profile, maxCount)).join("");
+    top
+      .map((m, i) =>
+        cardHtml(
+          m,
+          data.source.profile,
+          maxCount,
+          i,
+          (data.evaluated && data.evaluated.length) || top.length
+        )
+      )
+      .join("");
 
+  const byName = new Map(top.map((m) => [m.name, m]));
   resultsEl.querySelectorAll(".card").forEach((card) => {
     card.addEventListener("click", () => {
       const marker = markersByName.get(card.dataset.name);
@@ -454,6 +576,29 @@ function drawCards(top) {
         map.setView(marker.getLatLng(), Math.max(map.getZoom(), 13));
         marker.openPopup();
       }
+      const m = byName.get(card.dataset.name);
+      if (m) showRoute(m);
     });
   });
+}
+
+// Shareable search URLs: ?address=…&radius=… pre-fills and auto-runs.
+// The auto-run is throttled per tab — otherwise every page reload burns the
+// per-IP search quota and the rate limit never appears to clear.
+const urlParams = new URLSearchParams(location.search);
+const urlAddress = urlParams.get("address");
+if (urlAddress) {
+  addressInput.value = urlAddress;
+  const urlRadius = parseFloat(urlParams.get("radius"));
+  if (urlRadius >= 1 && urlRadius <= 50) {
+    radiusInput.value = urlRadius;
+    radiusValue.textContent = urlRadius;
+  }
+  const lastAutoRun = Number(sessionStorage.getItem("lastAutoRunAt") || 0);
+  if (Date.now() - lastAutoRun > 60000) {
+    sessionStorage.setItem("lastAutoRunAt", Date.now());
+    form.requestSubmit();
+  } else {
+    setStatus("Search already ran recently — press Find similar to run it again.");
+  }
 }

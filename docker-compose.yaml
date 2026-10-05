@@ -2,6 +2,8 @@ services:
   neighbourhood-similarity:
     build: .
     container_name: neighbourhood-similarity
+    networks:
+      - geo-network
     ports:
       - "${APP_PORT}:8000"
     volumes:
@@ -12,6 +14,7 @@ services:
       # self-hosted instances (recommended for heavy use).
       NOMINATIM_URL: ${NOMINATIM_URL}
       OVERPASS_URLS: ${OVERPASS_URLS}
+      ROUTER_URLS: ${ROUTER_URLS}
       USER_AGENT: ${USER_AGENT}
       # Local radius used to characterise each neighbourhood
       PROFILE_RADIUS_M: ${PROFILE_RADIUS_M}
@@ -33,6 +36,12 @@ services:
       # Hard time caps so searches return partials/errors instead of hanging
       PROFILE_BUDGET_S: ${PROFILE_BUDGET_S}
       MANDATORY_BUDGET_S: ${MANDATORY_BUDGET_S}
+      # Per-IP abuse limit for the public endpoint
+      SEARCH_RATE_LIMIT: ${SEARCH_RATE_LIMIT}
+      SEARCH_RATE_WINDOW_S: ${SEARCH_RATE_WINDOW_S}
+      # Per-IP limit for route-preview requests
+      ROUTE_RATE_LIMIT: ${ROUTE_RATE_LIMIT}
+      ROUTE_RATE_WINDOW_S: ${ROUTE_RATE_WINDOW_S}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/api/health')"]
@@ -50,9 +59,53 @@ services:
       context: .
       dockerfile: Dockerfile.tunnel
     container_name: neighbourhood-tunnel
+    networks:
+      - geo-network
     environment:
       TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
     restart: unless-stopped
     depends_on:
       neighbourhood-similarity:
         condition: service_healthy
+
+  # Self-hosted Overpass API: serves BC + Washington + Florida OSM data.
+  # First boot imports osm-data/db/regions.osm.bz2 (built by scripts/
+  # build-overpass-data.sh; the image's importer needs bz2 XML, not PBF) —
+  # takes a while; queries fail until done and the app falls back to the
+  # public mirrors in OVERPASS_URLS.
+  overpass:
+    image: wiktorn/overpass-api:latest
+    container_name: neighbourhood-overpass
+    networks:
+      - geo-network
+    environment:
+      OVERPASS_PLANET_URL: "file:///db/regions.osm.bz2"
+      OVERPASS_META: "no"
+      OVERPASS_MODE: "init"
+      # Generous quotas: this instance only serves our own app.
+      OVERPASS_MAX_TIMEOUT: "300"
+      OVERPASS_SPACE: "4294967296"
+      OVERPASS_TIME: "28800"
+    volumes:
+      - ./osm-data/db:/db
+    restart: unless-stopped
+    # no host port — reached only via geo-network at
+    # http://overpass/api/interpreter
+
+  # Self-hosted OSRM router over the same BC+WA+FL extracts — provides drive
+  # times/distances on result cards and route previews on map clicks.
+  # Build the routing graph first with scripts/build-routing-data.sh.
+  osrm:
+    image: osrm/osrm-backend:latest
+    container_name: neighbourhood-osrm
+    networks:
+      - geo-network
+    volumes:
+      - ./osm-data/routing:/data
+    command: osrm-routed --algorithm mld --max-table-size 64 /data/regions.osrm
+    restart: unless-stopped
+    # no host port — reached only via geo-network at http://osrm:5000
+
+networks:
+  geo-network:
+    name: geo-network

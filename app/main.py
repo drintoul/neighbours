@@ -16,16 +16,17 @@ import json
 import os
 import random
 import time
+from collections import deque
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import osm
+from . import osm, routing
 from .profile import CATEGORIES, CATEGORY_LABELS, build_profile
 from .similarity import haversine_km, similarity_score
 
@@ -43,6 +44,9 @@ RETRY_DELAY_S = float(os.environ.get("RETRY_DELAY_S", "10"))
 PROFILE_BUDGET_S = float(os.environ.get("PROFILE_BUDGET_S", "240"))
 # Budget for the mandatory geocode+discovery stage before erroring out.
 MANDATORY_BUDGET_S = float(os.environ.get("MANDATORY_BUDGET_S", "150"))
+# Keepalive interval — Cloudflare drops proxied streams after ~100s of
+# silence, so we emit a ping whenever no real event has gone out for a while.
+HEARTBEAT_S = 15
 # Directory for persisted caches (bind-mounted volume in Docker).
 DATA_DIR = Path(os.environ.get("DATA_DIR", "./data"))
 
@@ -79,7 +83,10 @@ async def lifespan(app: FastAPI):
     # Drop cached all-zero profiles: earlier Overpass versions of this bug
     # cached server-side-timeout responses (HTTP 200 + empty elements) as
     # real profiles. Genuine zeros simply get re-fetched on next search.
-    _profile_cache.drop_where(lambda p: not any(p.values()))
+    # Also drop profiles built before a category was added (missing keys).
+    _profile_cache.drop_where(
+        lambda p: not any(p.values()) or len(p) != len(CATEGORIES)
+    )
     _profile_cache.save()
     try:
         await asyncio.wait_for(osm.verify_endpoints(app.state.http), timeout=45)
@@ -96,6 +103,16 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Neighbourhood Similarity Finder", lifespan=lifespan)
 
 
+@app.middleware("http")
+async def static_revalidate(request, call_next):
+    """Static assets: force browsers to revalidate (304 when unchanged) so
+    updated JS/CSS is picked up immediately after a rebuild."""
+    response = await call_next(request)
+    if request.url.path.startswith("/static/") or request.url.path == "/":
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 class SearchRequest(BaseModel):
     address: str = Field(min_length=2, max_length=300)
     radius_km: float = Field(default=25, ge=1, le=50)
@@ -108,9 +125,20 @@ async def health():
     return {"status": "ok"}
 
 
+# Cache the self-hosted data timestamp for an hour — it only changes when
+# the local Overpass data is rebuilt.
+_data_as_of: tuple[float, str | None] = (0.0, None)
+
+
 @app.get("/api/categories")
 async def categories():
-    return {"categories": CATEGORY_LABELS}
+    global _data_as_of
+    if time.monotonic() - _data_as_of[0] > 3600:
+        _data_as_of = (
+            time.monotonic(),
+            await osm.regional_data_timestamp(app.state.http),
+        )
+    return {"categories": CATEGORY_LABELS, "data_as_of": _data_as_of[1]}
 
 
 @app.get("/api/reverse")
@@ -190,10 +218,54 @@ async def _profile_for(lat: float, lon: float, client: httpx.AsyncClient) -> dic
     return profile
 
 
+# Per-IP rate limit for the expensive endpoint — a search can fan out to ~25
+# Overpass queries, and the site is publicly reachable via the tunnel.
+SEARCH_RATE_LIMIT = int(os.environ.get("SEARCH_RATE_LIMIT", "1"))
+SEARCH_RATE_WINDOW_S = int(os.environ.get("SEARCH_RATE_WINDOW_S", "60"))
+_search_times: dict[str, deque] = {}
+
+# Route previews are cheap (one OSRM call each) but keep a modest cap so a
+# page can't hammer the public demo router via our proxy.
+ROUTE_RATE_LIMIT = int(os.environ.get("ROUTE_RATE_LIMIT") or "20")
+ROUTE_RATE_WINDOW_S = int(os.environ.get("ROUTE_RATE_WINDOW_S") or "60")
+_route_times: dict[str, deque] = {}
+
+
+def _client_ip(request: Request) -> str:
+    # Behind the Cloudflare tunnel, the real client IP arrives in
+    # CF-Connecting-IP; request.client.host would be the tunnel container.
+    return (
+        request.headers.get("cf-connecting-ip")
+        or (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+        or request.client.host
+    )
+
+
 @app.post("/api/search")
-async def search(req: SearchRequest):
+async def search(req: SearchRequest, request: Request):
     """Streams newline-delimited JSON progress events so the client can show
     real pipeline status, ending with a 'result' or 'error' object."""
+    ip = _client_ip(request)
+    now = time.time()
+    times = _search_times.setdefault(ip, deque())
+    while times and now - times[0] > SEARCH_RATE_WINDOW_S:
+        times.popleft()
+    if len(times) >= SEARCH_RATE_LIMIT:
+        retry_in = int(SEARCH_RATE_WINDOW_S - (now - times[0])) + 1
+        return JSONResponse(
+            {
+                "detail": f"Rate limit — at most {SEARCH_RATE_LIMIT} "
+                f"search{'es' if SEARCH_RATE_LIMIT != 1 else ''} per "
+                f"{SEARCH_RATE_WINDOW_S}s. Try again in ~{retry_in}s."
+            },
+            status_code=429,
+            headers={"Retry-After": str(retry_in)},
+        )
+    times.append(now)
+    # Reap IPs that have no recent activity so the map doesn't grow forever.
+    if len(_search_times) > 500:
+        for k in [k for k, v in _search_times.items() if not v]:
+            _search_times.pop(k, None)
     return StreamingResponse(
         _run_search(req), media_type="application/x-ndjson"
     )
@@ -251,11 +323,16 @@ async def _run_search(req: SearchRequest):
 
         task = asyncio.ensure_future(_discover())
         try:
+            last_emit = time.monotonic()
             while not task.done():
                 try:
                     ev = await asyncio.wait_for(events_q.get(), timeout=0.5)
                 except asyncio.TimeoutError:
+                    if time.monotonic() - last_emit >= HEARTBEAT_S:
+                        last_emit = time.monotonic()
+                        yield emit("ping")
                     continue
+                last_emit = time.monotonic()
                 yield emit(
                     "wait",
                     seconds=ev["seconds"],
@@ -321,6 +398,7 @@ async def _run_search(req: SearchRequest):
 
         tasks = [asyncio.ensure_future(counted(p)) for p in candidates]
         deadline = time.monotonic() + PROFILE_BUDGET_S
+        last_emit = time.monotonic()
         timed_out = False
         while not all(t.done() for t in tasks):
             remaining = deadline - time.monotonic()
@@ -334,7 +412,11 @@ async def _run_search(req: SearchRequest):
                     events_q.get(), timeout=min(0.5, remaining)
                 )
             except asyncio.TimeoutError:
+                if time.monotonic() - last_emit >= HEARTBEAT_S:
+                    last_emit = time.monotonic()
+                    yield emit("ping")
                 continue
+            last_emit = time.monotonic()
             if ev.get("kind") == "wait":
                 yield emit(
                     "wait",
@@ -390,6 +472,21 @@ async def _run_search(req: SearchRequest):
         evaluated.sort(key=lambda r: r["score"], reverse=True)
         matches = evaluated[:TOP_MATCHES]
 
+        # Attach drive time/distance to every evaluated candidate — one OSRM
+        # table request. Best-effort: a router outage never fails a search.
+        try:
+            yield emit("progress", message="Calculating drive times…")
+            drives = await routing.drive_table(
+                (lat, lon),
+                [(r["lat"], r["lon"]) for r in evaluated],
+                client,
+            )
+            for r, d in zip(evaluated, drives):
+                if d:
+                    r.update(d)
+        except routing.RoutingError:
+            pass
+
         yield emit(
             "result",
             data={
@@ -424,9 +521,33 @@ async def _run_search(req: SearchRequest):
         osm.reset_wait_notifier(notify_token)
 
 
+@app.get("/api/route")
+async def route(from_lat: float, from_lon: float, to_lat: float, to_lon: float, request: Request):
+    """Driving route geometry between two points (for map previews)."""
+    ip = _client_ip(request)
+    now = time.time()
+    times = _route_times.setdefault(ip, deque())
+    while times and now - times[0] > ROUTE_RATE_WINDOW_S:
+        times.popleft()
+    if len(times) >= ROUTE_RATE_LIMIT:
+        raise HTTPException(status_code=429, detail="Route rate limit")
+    times.append(now)
+    try:
+        return await routing.route_geometry(
+            (from_lat, from_lon), (to_lat, to_lon), app.state.http
+        )
+    except routing.RoutingError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+
 @app.get("/")
 async def index():
     return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/robots.txt", include_in_schema=False)
+async def robots():
+    return FileResponse(STATIC_DIR / "robots.txt")
 
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

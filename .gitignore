@@ -1,4 +1,5 @@
 .env
 data/
+osm-data/
 __pycache__/
 *.pyc

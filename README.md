@@ -6,12 +6,24 @@ sidebar](screenshot.png)
 
 Enter an address, pick a search radius (up to 50 km), and find nearby
 neighbourhoods with a similar mix of amenities — restaurants, cafés, nightlife,
-shopping, groceries, parks, waterfront, arts & culture, fitness, schools, and
-public transit.
+shopping, groceries, parks, waterfront, arts & culture, fitness, schools,
+healthcare, hotels, transit and cycling infrastructure — and a similar level of
+industrial nuisances.
 
 Everything runs on **free OpenStreetMap services** — no API keys, no accounts,
 no quotas to manage. Geocoding comes from **Nominatim** and point-of-interest
 data from the **Overpass API**.
+
+This instance is initialized with a **self-hosted Overpass database covering
+one province and two states — British Columbia, Washington and Florida** —
+so searches there are answered locally, fast and reliably. The local data
+was built from Geofabrik extracts dated **2026-10-03**; the UI shows the
+live data date under "How does it work?" (served from the instance's
+`/api/timestamp`). Re-run `scripts/build-overpass-data.sh` to refresh it.
+**Other geographies work too** — they just rely on the public Overpass
+mirrors, which are slower and may occasionally be unavailable (the app
+retries and fails over automatically, but a search may still time out —
+just try again). See [Self-hosted Overpass](#self-hosted-overpass-bc--wa--fl).
 
 ## Why I built this
 
@@ -26,7 +38,7 @@ neighbourhoods by how similar their amenity mix is.
 ## What does "similar" mean?
 
 Each neighbourhood is reduced to a *profile*: the number of points of interest
-in 11 categories, counted within a fixed local radius (default ~1.5 km) of its
+in 15 categories, counted within a fixed local radius (default ~1.5 km) of its
 centre:
 
 | Category | What it counts (OSM tags, simplified) |
@@ -34,14 +46,23 @@ centre:
 | Restaurants | `amenity=restaurant`, `fast_food`, `food_court`, … |
 | Cafés | `amenity=cafe`, `coffee_shop`, `ice_cream` |
 | Bars & nightlife | `amenity=bar`, `pub`, `nightclub`, `biergarten` |
-| Shopping | any `shop=*` except grocery-type stores |
+| Shopping | any `shop=*` except grocery-type stores and bike shops |
 | Groceries | `shop=supermarket`, `bakery`, `greengrocer`, `deli`, … |
+| Hotels & tourism | `tourism=hotel`, `hostel`, `guest_house`, `motel` |
+| Healthcare | hospitals, clinics, pharmacies, dentists, `healthcare=*` |
+| Schools | `amenity=school`, `kindergarten`, `university` |
 | Parks & green space | `leisure=park`, `garden`, `playground`, woods, meadows |
 | Waterfront | `natural=water`, `coastline`, `beach`, waterways, marinas |
 | Arts & culture | cinemas, theatres, museums, galleries, libraries |
 | Sports & fitness | gyms, pools, pitches, courts, golf courses |
-| Schools | `amenity=school`, `kindergarten`, `university` |
 | Public transit | bus stops, train/tram/subway stations, ferry terminals |
+| Cycling | `highway=cycleway`, bike parking/rental, `shop=bicycle` |
+| Industrial & nuisances | `landuse=industrial`, rail lines, aerodromes, power plants, waste facilities |
+
+The last one is the odd category out: it measures *negative* features, so a
+match scores similarity of character including how industrial an area feels —
+a café-rich neighbourhood next to a rail yard won't match an identical café
+count in a leafy suburb as closely.
 
 Candidates are scored by **cosine similarity of log-scaled profiles**. Two
 consequences worth understanding:
@@ -63,8 +84,8 @@ address ──► geocode (Nominatim)
      profile source area ──────►  discover named places
      (POI counts in ~1.5 km)      (place=suburb/neighbourhood/…)
               │                            │
-              │                    sample ≤ MAX_CANDIDATES (25),
-              │                    spread across distance bands
+              │                    ≤ MAX_CANDIDATES (25): nearest few
+              │                    per 4 equal-width distance bands
               │                            │
               ▼                            ▼
                profile each candidate concurrently
@@ -79,13 +100,15 @@ In more detail:
 1. **Geocoding** — the address is resolved to coordinates with Nominatim.
 2. **Source profile** — all amenity/shop/leisure/natural/transit POIs within
    `PROFILE_RADIUS_M` are fetched in one Overpass query and classified into the
-   11 categories.
+   15 categories.
 3. **Candidate discovery** — named `place` features (neighbourhoods, quarters,
    suburbs, towns, villages) inside your search radius are queried, deduplicated
    by name, and overlapping centroids are suppressed.
-4. **Candidate sampling** — up to `MAX_CANDIDATES` are chosen via
-   distance-stratified sampling, so results cover both nearby and far-flung
-   areas rather than just the closest ring.
+4. **Candidate sampling** — selection is deterministic (no randomness): the
+   distance range from ~1 km to the farthest named place is split into **4
+   equal-width bands**, and the nearest candidates from each band are kept
+   (≈`MAX_CANDIDATES` total). That guarantees a mix of close and distant
+   neighbourhoods rather than only the closest ring.
 5. **Candidate profiling** — each candidate gets the same POI profile, fetched
    concurrently (`OVERPASS_CONCURRENCY`) across multiple Overpass mirrors with
    automatic failover and one retry per failure.
@@ -98,14 +121,16 @@ cp .env.example .env        # adjust values if needed
 docker compose up --build
 ```
 
-Then open http://localhost:8000
+Then open `http://localhost:${APP_PORT}` (8000 by default).
 
-The UI shows the source address (red marker) with its neighbourhood radius, a
-dashed circle for your search radius, and colour-coded match markers
-(red → green = low → high similarity). Click a result card to jump to it on the
-map; the bars in each card compare your neighbourhood's category counts (grey)
-with the match's (blue). You can also **click anywhere on the map** to
-reverse-geocode that spot into the search bar.
+The UI shows the source address as a pin with a red circle marking its ~1.5 km
+neighbourhood radius, a dashed circle for your search radius, and colour-coded
+match markers (red → green = low → high similarity). Click a result card to
+jump to it on the map; the bars in each card compare your neighbourhood's
+category counts (grey) with the match's (blue). You can also **click anywhere
+on the map** — it drops a green marker and reverse-geocodes that spot into the
+search bar. Searches are shareable: the URL updates to
+`?address=…&radius=…`, and opening such a link runs the search immediately.
 
 ### Weighting features
 
@@ -140,7 +165,8 @@ automatically by `docker compose`. Every value also has a built-in default:
 | `APP_PORT` | `8000` | Host port the UI is published on |
 | `DATA_DIR` | `./data` | Host dir bind-mounted at `/data` — caches persist across restarts |
 | `NOMINATIM_URL` | `https://nominatim.openstreetmap.org` | Geocoding endpoint |
-| `OVERPASS_URLS` | three public mirrors | Comma-separated Overpass endpoints (failover) |
+| `OVERPASS_URLS` | three public mirrors | Comma-separated Overpass endpoints (failover); supports `\|bbox:` + `\|nolimit` hints |
+| `ROUTER_URLS` | public OSRM demo | OSRM endpoints for drive times/route previews — same endpoint syntax |
 | `USER_AGENT` | `neighbourhood-similarity/1.0` | Sent with all OSM requests — add your contact info |
 | `PROFILE_RADIUS_M` | `1500` | Radius that defines one neighbourhood's character |
 | `MAX_CANDIDATES` | `25` | Max candidate neighbourhoods profiled per search |
@@ -153,9 +179,57 @@ automatically by `docker compose`. Every value also has a built-in default:
 | `ALL_MIRRORS_WAIT_S` | `60` | Pause before retrying when every mirror fails (shown as a countdown in the UI) |
 | `PROFILE_BUDGET_S` | `240` | Hard cap on candidate profiling — partial results returned |
 | `MANDATORY_BUDGET_S` | `150` | Hard cap on geocode+discovery before erroring out |
+| `SEARCH_RATE_LIMIT` | `1` | Max `/api/search` calls per IP per window (anti-abuse for public deployments) |
+| `SEARCH_RATE_WINDOW_S` | `60` | Rate-limit window in seconds |
+| `ROUTE_RATE_LIMIT` | `20` | Max `/api/route` calls per IP per window |
+| `ROUTE_RATE_WINDOW_S` | `60` | Route rate-limit window in seconds |
 
 For heavy use, point `OVERPASS_URLS`/`NOMINATIM_URL` at your own instances —
 public endpoints are rate-limited and shared.
+
+### Self-hosted Overpass (BC + WA + FL)
+
+The compose stack includes a `overpass` service
+(`wiktorn/overpass-api`) serving a merged, tag-filtered extract of British
+Columbia, Washington, and Florida. To build the data and start it:
+
+```bash
+./scripts/build-overpass-data.sh   # download + tag-filter + merge extracts
+docker compose up -d overpass      # first boot imports the PBF (~minutes)
+```
+
+Then put it first in `OVERPASS_URLS`, tagged with its coverage so searches
+outside the three regions skip it and go straight to the public mirrors
+(`bbox:` is `west:south:east:north`, one per region):
+
+```env
+OVERPASS_URLS=http://overpass/api/interpreter|nolimit|bbox:-138.5:48.33:-114.15:59.9|bbox:-124.85:45.6:-116.95:48.95|bbox:-87.6:24.4:-80.0:30.95,https://overpass-api.de/api/interpreter,…
+```
+
+`nolimit` skips the per-host politeness throttle (it exists for public
+mirrors, not our own instance). Raw downloads and the Overpass database live
+under `osm-data/` (gitignored — PBF extracts and generated DB files are never
+committed). Re-run the script and recreate the `overpass` container to
+refresh data. Endpoints without a `bbox` hint are treated as global and
+queried for any location.
+
+### Self-hosted routing (OSRM)
+
+Result cards show drive time and distance to each match, and clicking a card
+draws the actual driving route on the map. These come from an `osrm` service
+(`osrm/osrm-backend`, car profile) built from the same three raw extracts —
+the tag-filtered Overpass PBF can't be reused (it drops the road network).
+Build the routing graph once:
+
+```bash
+./scripts/build-routing-data.sh   # merge raw extracts + osrm extract/partition/customize
+docker compose up -d osrm
+```
+
+`ROUTER_URLS` uses the same `|bbox:`/`|nolimit` syntax as `OVERPASS_URLS`;
+routes where both endpoints are inside BC/WA/FL go to the local router,
+everything else uses the public OSRM demo server. If no router answers,
+searches still return matches — just without drive stats.
 
 ## Data & caching
 
@@ -197,6 +271,14 @@ that scale each category before the cosine comparison. The response's
 `matches` are the top `TOP_MATCHES`; `evaluated` contains every scored
 candidate so clients can re-rank locally.
 
+The endpoint **streams newline-delimited JSON** (`application/x-ndjson`):
+
+- `{"type":"progress","message":"…","done":n,"total":n}` — live pipeline status
+- `{"type":"wait","seconds":60,"message":"…"}` — all mirrors failed; the server
+  pauses this long before retrying (the UI counts it down)
+- `{"type":"result","data":{…}}` — final payload, shown below
+- `{"type":"error","detail":"…"}` — terminal error
+
 ```json
 {
   "source": {
@@ -220,10 +302,19 @@ candidate so clients can re-rank locally.
 Other endpoints: `GET /api/health`, `GET /api/categories`,
 `GET /api/reverse?lat=..&lon=..` (reverse geocoding for map clicks).
 
+## Tests
+
+```bash
+docker compose exec neighbourhood-similarity python -m pytest tests -q
+```
+
+Covers OSM tag classification, log-scaled/weighted similarity, candidate
+sampling, and cache persistence — no network needed.
+
 ## Project layout
 
 ```
-docker-compose.yaml      # app + optional cloudflared tunnel (profile: tunnel)
+docker-compose.yaml      # app + cloudflared tunnel (idles unless token set)
 Dockerfile               # python:3.12-slim + uvicorn
 app/
   main.py                # FastAPI: /api/search orchestration, caching, sampling
@@ -231,6 +322,7 @@ app/
   profile.py             # OSM tag → 11-category classification
   similarity.py          # log-scaled cosine similarity, haversine
   static/                # Leaflet single-page UI (vanilla JS, no build step)
+tests/                   # pytest suite (runs inside the app container)
 data/                    # persistent cache (gitignored, bind-mounted)
 ```
 
