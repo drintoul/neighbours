@@ -67,7 +67,13 @@ def similarity_score(
             num += d * max(-1.0, min(1.0, surplus))
             den += abs(d)
         if den:
-            base *= 1.0 + _BONUS * (num / den)
+            tilt = num / den
+            if tilt > 0:
+                # Close part of the remaining gap to perfect — approaches
+                # but never reaches 1.0, so "100%" means truly identical.
+                base += (1.0 - base) * _BONUS * tilt
+            else:
+                base *= 1.0 + _BONUS * tilt
 
     return min(1.0, max(0.0, base))
 

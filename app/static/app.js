@@ -276,7 +276,13 @@ function weightedScore(src, cand, w) {
   if (!na || !nb) return 0;
   let score =
     (dot / (na * nb)) * Math.sqrt(Math.min(na, nb) / Math.max(na, nb));
-  if (den) score *= 1 + BONUS * (num / den);
+  if (den) {
+    const tilt = num / den;
+    // Positive tilt closes part of the gap to 1.0 (never reaching it);
+    // negative tilt shrinks the score. "100%" stays reserved for a
+    // genuinely identical profile.
+    score = tilt > 0 ? score + (1 - score) * BONUS * tilt : score * (1 + BONUS * tilt);
+  }
   return Math.min(1, Math.max(0, score));
 }
 
