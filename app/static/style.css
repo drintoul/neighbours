@@ -354,6 +354,23 @@ main {
 .diff.good { color: #16a34a; }
 .diff.bad { color: #dc2626; }
 
+.src-card {
+  background: #f8fafc;
+  border-style: dashed;
+}
+
+.src-card .meta {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.src-badge {
+  background: #64748b;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
 .legend {
   font-size: 0.72rem;
   color: #8494a7;

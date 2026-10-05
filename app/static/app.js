@@ -365,6 +365,35 @@ function cardHtml(m, srcProfile, maxCount, rank, total) {
     </div>`;
 }
 
+// Pinned reference card for the submitted address — every card below is
+// compared against this profile, so it sits at the top of the list.
+function srcCardHtml(src, maxCount) {
+  const cats = Object.keys(categoryLabels).length
+    ? Object.keys(categoryLabels)
+    : Object.keys(src.profile);
+  const rows = cats
+    .filter((k) => (src.profile[k] || 0) > 0)
+    .map((k) => {
+      const s = src.profile[k] || 0;
+      const scale = Math.max(maxCount, 1);
+      return `<div class="label">${icon(k)}${escapeHtml(categoryLabels[k] || k)}</div>
+        <div class="bars">
+          <span class="bar src" style="width:${Math.round((s / scale) * 60)}px"></span>
+          <span class="counts">${s}</span>
+        </div>`;
+    })
+    .join("");
+  return `
+    <div class="card src-card">
+      <div class="card-head">
+        <h3>${escapeHtml(src.name)}</h3>
+        <span class="score-badge src-badge">your area</span>
+      </div>
+      <div class="meta">${escapeHtml(src.display_name)}</div>
+      <div class="cmp">${rows}</div>
+    </div>`;
+}
+
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
   const address = addressInput.value.trim();
@@ -550,6 +579,7 @@ function drawCards(top) {
     ...Object.values(data.source.profile)
   );
   resultsEl.innerHTML =
+    srcCardHtml(data.source, maxCount) +
     `<div class="legend">
        ${data.candidates_evaluated} of ${data.candidates_found} neighbourhoods evaluated ·
        top ${top.length} shown${data.partial ? " · partial (time limit)" : ""} ·
@@ -568,8 +598,14 @@ function drawCards(top) {
       )
       .join("");
 
+  const srcCard = resultsEl.querySelector(".src-card");
+  if (srcCard)
+    srcCard.addEventListener("click", () =>
+      map.setView([data.source.lat, data.source.lon], Math.max(map.getZoom(), 13))
+    );
+
   const byName = new Map(top.map((m) => [m.name, m]));
-  resultsEl.querySelectorAll(".card").forEach((card) => {
+  resultsEl.querySelectorAll(".card:not(.src-card)").forEach((card) => {
     card.addEventListener("click", () => {
       const marker = markersByName.get(card.dataset.name);
       if (marker) {
