@@ -4,7 +4,7 @@
 cards showing per-category comparison bars, and the feature-importance
 sidebar](screenshot.png)
 
-Enter an address, pick a search radius (up to 50 km), and find nearby
+Enter an address, pick a search radius (up to 100 km), and find nearby
 neighbourhoods with a similar mix of amenities — restaurants, cafés, nightlife,
 shopping, groceries, parks, waterfront, arts & culture, fitness, schools,
 healthcare, hotels, transit and cycling infrastructure — and a similar level of

@@ -65,9 +65,12 @@ map.on("click", async (e) => {
 
   try {
     const resp = await fetch(`/api/reverse?lat=${lat}&lon=${lng}`);
+    if (!resp.ok) {
+      const data = await resp.json().catch(() => ({}));
+      throw new Error(data.detail || `HTTP ${resp.status}`);
+    }
     const data = await resp.json();
     if (seq !== reverseSeq) return; // a newer click superseded this one
-    if (!resp.ok) throw new Error(data.detail || `HTTP ${resp.status}`);
     addressInput.value = data.display_name;
     clickMarker.bindTooltip(data.short_name).openTooltip();
     setStatus(`Using "${data.short_name}" — adjust the radius and hit Find similar.`);
