@@ -310,6 +310,7 @@ function applyRank() {
     const mk = markersByName.get(m.name);
     if (mk) {
       mk.setStyle({ fillColor: rankColor(i, ranked.length) });
+      mk.setTooltipContent(`${escapeHtml(m.name)} — ${m.score}%`);
       mk.setPopupContent(popupHtml(m, lastData.source.profile));
     }
   }
@@ -589,7 +590,7 @@ function drawMap(ranked) {
       fillColor: rankColor(i, ranked.length),
       fillOpacity: 0.95,
     }).addTo(layerGroup);
-    marker.bindTooltip(escapeHtml(m.name), { direction: "top", offset: [0, -10] });
+    marker.bindTooltip(`${escapeHtml(m.name)} — ${m.score}%`, { direction: "top", offset: [0, -10] });
     marker.bindPopup(popupHtml(m, src.profile));
     markersByName.set(m.name, marker);
     bounds.push([m.lat, m.lon]);
