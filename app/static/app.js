@@ -359,7 +359,7 @@ function deltaHtml(cat, s, c) {
   let txt;
   if (d === 0) txt = "±0";
   // No baseline to divide by — report the raw count instead of a percentage.
-  else if (s === 0) txt = `+${d} new`;
+  else if (s === 0) txt = `+${d} (vs 0)`;
   else txt = `${d > 0 ? "+" : "−"}${Math.abs(Math.round((d / s) * 100))}%`;
   return `<span class="counts diff ${cls}" title="vs your area">${txt}</span>`;
 }
