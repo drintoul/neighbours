@@ -34,8 +34,9 @@ from .similarity import haversine_km, similarity_score
 PROFILE_RADIUS_M = int(os.environ.get("PROFILE_RADIUS_M", "1500"))
 # Max candidates to profile — public Overpass quotas make bigger fan-outs slow.
 MAX_CANDIDATES = int(os.environ.get("MAX_CANDIDATES", "25"))
-# Concurrent Overpass profile queries.
-CONCURRENCY = int(os.environ.get("OVERPASS_CONCURRENCY", "4"))
+# Concurrent Overpass profile queries. Only affects throughput against the
+# self-hosted instance — public mirrors stay serialized by per-host throttle.
+CONCURRENCY = int(os.environ.get("OVERPASS_CONCURRENCY", "8"))
 TOP_MATCHES = int(os.environ.get("TOP_MATCHES", "10"))
 # Base wait before retrying a failed candidate (jitter is added on top).
 RETRY_DELAY_S = float(os.environ.get("RETRY_DELAY_S", "10"))
@@ -208,8 +209,13 @@ def _pick_candidates(places: list[dict], lat: float, lon: float, max_n: int) -> 
     return final
 
 
+# Bump when the POI query or category definitions change — invalidates
+# cached profiles built under the old query instead of serving stale ones.
+PROFILE_CACHE_VERSION = "v2"
+
+
 async def _profile_for(lat: float, lon: float, client: httpx.AsyncClient) -> dict:
-    key = (round(lat, 3), round(lon, 3))
+    key = (PROFILE_CACHE_VERSION, round(lat, 3), round(lon, 3))
     cached = _profile_cache.get(key)
     if cached is not None:
         return cached

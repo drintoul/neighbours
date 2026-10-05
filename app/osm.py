@@ -487,22 +487,22 @@ out center 250;
 
 
 async def fetch_pois(lat: float, lon: float, radius_m: int, client: httpx.AsyncClient) -> list[dict]:
-    """Fetch POI elements (tags only) around a point for profile classification."""
+    """Fetch POI elements (tags only) around a point for profile classification.
+
+    Keys where every value counts are grouped into one key-regex selector;
+    high-volume keys keep their value filters so public mirrors don't
+    return every road or tree in the radius.
+    """
     query = f"""
 [out:json][timeout:60];
 (
-  nwr["amenity"](around:{radius_m},{lat},{lon});
-  nwr["shop"](around:{radius_m},{lat},{lon});
-  nwr["leisure"](around:{radius_m},{lat},{lon});
+  nwr[~"^(amenity|shop|leisure|waterway|healthcare|public_transport)$"~"."](around:{radius_m},{lat},{lon});
   nwr["tourism"~"museum|gallery|attraction|theme_park|zoo|aquarium|artwork|hotel|hostel|guest_house|motel"](around:{radius_m},{lat},{lon});
   nwr["natural"~"water|coastline|beach|bay|wood|scrub|grassland"](around:{radius_m},{lat},{lon});
-  nwr["waterway"](around:{radius_m},{lat},{lon});
   nwr["landuse"~"recreation_ground|village_green|grass|forest|meadow|industrial|landfill|quarry|brownfield"](around:{radius_m},{lat},{lon});
   nwr["aeroway"~"aerodrome|helipad"](around:{radius_m},{lat},{lon});
   nwr["man_made"~"works|wastewater_plant"](around:{radius_m},{lat},{lon});
   nwr["power"~"plant"](around:{radius_m},{lat},{lon});
-  nwr["healthcare"](around:{radius_m},{lat},{lon});
-  nwr["public_transport"](around:{radius_m},{lat},{lon});
   nwr["railway"~"station|tram_stop|halt|subway_entrance|rail"](around:{radius_m},{lat},{lon});
   nwr["highway"~"bus_stop|cycleway"](around:{radius_m},{lat},{lon});
 );
