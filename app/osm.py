@@ -340,6 +340,13 @@ async def geocode(address: str, client: httpx.AsyncClient) -> dict:
         "lon": float(top["lon"]),
         "display_name": top.get("display_name", address),
         "name": name,
+        "city": (
+            addr.get("city")
+            or addr.get("town")
+            or addr.get("village")
+            or addr.get("municipality")
+            or ""
+        ),
     }
 
 
@@ -386,6 +393,13 @@ async def reverse_geocode(lat: float, lon: float, client: httpx.AsyncClient) -> 
         "lon": lon,
         "display_name": display,
         "short_name": short,
+        "city": (
+            addr.get("city")
+            or addr.get("town")
+            or addr.get("village")
+            or addr.get("municipality")
+            or ""
+        ),
     }
 
 

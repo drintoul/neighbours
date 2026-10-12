@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <title>Nearby Eats — restaurants within a 10-minute drive</title>
+  <meta name="description"
+    content="Enter an address, hotel, or landmark — get every restaurant within a 10-minute drive, grouped by cuisine, with ratings, prices and a map.">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Nearby Eats">
+  <meta property="og:description"
+    content="Every restaurant within a 10-minute drive, grouped by cuisine — ratings, prices, and a map.">
+  <meta property="og:url" content="https://feedme.voyagesbydave.ca/">
+  <meta property="og:image" content="https://feedme.voyagesbydave.ca/static/social-card.png">
+  <meta property="og:site_name" content="Nearby Eats">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Nearby Eats">
+  <meta name="twitter:description"
+    content="Every restaurant within a 10-minute drive, grouped by cuisine — ratings, prices, and a map.">
+  <meta name="twitter:image" content="https://feedme.voyagesbydave.ca/static/social-card.png">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "WebApplication",
+    "name": "Nearby Eats",
+    "applicationCategory": "LifestyleApplication",
+    "operatingSystem": "Any",
+    "url": "https://feedme.voyagesbydave.ca/",
+    "description": "Enter an address, hotel, or landmark — get every restaurant within a 10-minute drive, grouped by cuisine, with ratings, prices and a map.",
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "CAD" },
+    "browserRequirements": "Requires JavaScript"
+  }
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="/static/style.css?v=2">
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Nearby <span class="b">Eats</span></h1>
+      <p>Enter an address, hotel, or landmark — get every restaurant within a
+         <strong>10-minute drive</strong>, grouped by cuisine.</p>
+    </div>
+    <nav class="header-links">
+      <a href="https://github.com/drintoul/neighbours" target="_blank" rel="noopener">Source on GitHub</a>
+      <a href="https://davidrintoul.info" target="_blank" rel="noopener">Dave Rintoul</a>
+    </nav>
+  </header>
+
+  <main>
+    <form id="search-form">
+      <input id="query" type="text" required
+        placeholder="e.g. Coast Hotel Langley, or an address"
+        autocomplete="off">
+      <button type="submit">Find restaurants</button>
+      <button type="button" id="locate" title="Use my current location">📍</button>
+    </form>
+
+    <div id="status"></div>
+
+    <section id="results" hidden>
+      <div id="hotel-card"></div>
+      <div class="layout">
+        <div id="map"></div>
+        <div id="groups"></div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    Data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>
+    contributors · Geocoding: Nominatim · POI data: Overpass API
+  </footer>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/opening_hours@3/opening_hours+deps.min.js"></script>
+  <script src="/static/app.js?v=2"></script>
+</body>
+</html>

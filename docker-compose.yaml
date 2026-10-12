@@ -50,6 +50,39 @@ services:
       retries: 3
       start_period: 10s
 
+  # Separate "Nearby Eats" service — same image, different entrypoint.
+  # Enter a hotel name/address, get restaurants within a 10-minute drive
+  # grouped by cuisine.
+  restaurant-finder:
+    build: .
+    container_name: restaurant-finder
+    networks:
+      - geo-network
+    ports:
+      - "${RESTAURANT_PORT}:8000"
+    environment:
+      NOMINATIM_URL: ${NOMINATIM_URL}
+      OVERPASS_URLS: ${OVERPASS_URLS}
+      ROUTER_URLS: ${ROUTER_URLS}
+      USER_AGENT: ${USER_AGENT}
+      MIN_REQUEST_INTERVAL_S: ${MIN_REQUEST_INTERVAL_S}
+      FAILOVER_DELAY_S: ${FAILOVER_DELAY_S}
+      RETRY_DELAY_S: ${RETRY_DELAY_S}
+      FAIL_COOLDOWN_S: ${FAIL_COOLDOWN_S}
+      ALL_MIRRORS_WAIT_S: ${ALL_MIRRORS_WAIT_S}
+      RESTAURANT_RATE_LIMIT: ${RESTAURANT_RATE_LIMIT}
+      RESTAURANT_RATE_WINDOW_S: ${RESTAURANT_RATE_WINDOW_S}
+      # Optional Google Places enrichment (ratings/price) — blank disables
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+    command: ["uvicorn", "restaurants.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
   # Optional public exposure via Cloudflare Tunnel. Always built with the
   # stack: runs the tunnel when CLOUDFLARE_TUNNEL_TOKEN is set in .env,
   # otherwise idles. Point the tunnel's public hostname at
@@ -102,7 +135,7 @@ services:
       - geo-network
     volumes:
       - ./osm-data/routing:/data
-    command: osrm-routed --algorithm mld --max-table-size 64 /data/regions.osrm
+    command: osrm-routed --algorithm mld --max-table-size 128 /data/regions.osrm
     restart: unless-stopped
     # no host port — reached only via geo-network at http://osrm:5000
 

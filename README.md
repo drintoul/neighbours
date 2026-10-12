@@ -124,6 +124,63 @@ docker compose up --build
 
 Then open `http://localhost:${APP_PORT}` (8000 by default).
 
+## Nearby Eats — restaurant finder
+
+The stack also runs a second, independent UI: the `restaurant-finder`
+service (same image, `restaurants/` package) at
+`http://localhost:${RESTAURANT_PORT}` (8010 by default). Enter an address,
+hotel name, landmark — or tap **📍** to use the device GPS (browser
+geolocation; needs HTTPS). `lat, lon` pasted into the box works too.
+
+Pipeline, streamed live to the UI as NDJSON progress events (the status
+line shows each stage with real counts):
+
+1. **Geocode** — Nominatim, with cleaned-up fallback variants
+   (`/` → commas, space-joined, name + each city segment, trimmed place
+   tails) before giving up. GPS coords skip this; a reverse geocode names
+   the hotel card instead.
+2. **Discovery** — Overpass for named food-service POIs (`restaurant`,
+   `cafe`, `fast_food`, `bar`, `pub`, …) within a wide straight-line
+   radius (`FETCH_RADIUS_M`, 12 km).
+3. **Drive time** — the OSRM table filters to a real **10-minute drive**
+   (`DRIVE_BUDGET_S`); straight-line fallback where no router covers the
+   area.
+4. **Enrichment** — optional Google Places overlay (see below).
+5. **Cleanup** — website links validated (dead links hidden; soft-404
+   bodies detected; Facebook URLs dropped). Addresses come from OSM
+   `addr:*`, Google `formattedAddress`, then Nominatim reverse-geocode
+   (≈ flagged); listings with no real numbered address are dropped, and
+   missing cities are filled in.
+
+Results are grouped into ~18 broad cuisine buckets (raw `cuisine` tags
+fold in: `nepalese` → Asian, `pita` → Mediterranean, …), sorted by
+listing count with **Other** always last. Each row shows the cuisine tag,
+linked address (opens Google Maps), `tel:` phone link, website pill,
+open/closed badge, drive-time pill and distance — colour-coded map dots
+match each section, and row↔marker selection works both ways.
+
+**Open/closed badges**: Google's `openNow` when enriched, otherwise the
+OSM `opening_hours` tag evaluated in the browser via opening_hours.js —
+"Open now · closes 11 PM" style labels with the next change time.
+
+**Optional Google Places enrichment**: set `GOOGLE_API_KEY` (Places API
+New; needs a billing-enabled GCP project — generous per-SKU free
+allotment covers this app's volume) and listings gain ★ rating + review
+count, `$$` price tier, a Google Maps place link, live `openNow`, a
+location-specific `websiteUri` (chain store-locator pages instead of
+corporate homepages), and `formattedAddress` address fills. Places are
+matched back to OSM spots by proximity + fuzzy name; area results cache
+6 h, a 429 trips a 1-hour circuit breaker, and everything degrades
+silently when the key is unset or quota-limited. Search radius tunable
+via `GOOGLE_RADIUS_M` (4 km default).
+
+Other details: per-IP rate limiting with a live countdown + auto-retry
+(`RESTAURANT_RATE_LIMIT`), mobile-first layout (chunky pill tap targets,
+non-sticky map, page-scroll wins over map-pan on touch), `noindex` +
+`robots.txt`, OG/Twitter social card, and a fixed footer with data
+attribution. To expose it publicly, point a tunnel hostname at
+`http://restaurant-finder:8000`.
+
 The UI shows the source address as a pin with a red circle marking its ~1.5 km
 neighbourhood radius, a dashed circle for your search radius, and colour-coded
 match markers (red → green = low → high similarity). Click a result card to
