@@ -133,7 +133,8 @@ hotel name, landmark — or tap **📍** to use the device GPS (browser
 geolocation; needs HTTPS). `lat, lon` pasted into the box works too.
 
 Pipeline, streamed live to the UI as NDJSON progress events (the status
-line shows each stage with real counts):
+line shows each stage with real counts — a cold search can take up to
+~60 s):
 
 1. **Geocode** — Nominatim, with cleaned-up fallback variants
    (`/` → commas, space-joined, name + each city segment, trimmed place
@@ -154,7 +155,9 @@ line shows each stage with real counts):
 
 Results are grouped into ~18 broad cuisine buckets (raw `cuisine` tags
 fold in: `nepalese` → Asian, `pita` → Mediterranean, …), sorted by
-listing count with **Other** always last. Each row shows the cuisine tag,
+listing count with **Other** always last. Within each group, listings
+rank by popularity — Google review count, then rating, then drive time.
+Each row shows the cuisine tag,
 linked address (opens Google Maps), `tel:` phone link, website pill,
 open/closed badge, drive-time pill and distance — colour-coded map dots
 match each section, and row↔marker selection works both ways.
