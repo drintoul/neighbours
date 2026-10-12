@@ -729,7 +729,13 @@ async def search(req: SearchRequest, request: Request):
             s["group"] = cuisine_group(s)
             groups.setdefault(s["group"], []).append(s)
         for items in groups.values():
-            items.sort(key=lambda s: s.get("drive_s", s["dist_km"] * 60))
+            items.sort(
+                key=lambda s: (
+                    -(s.get("review_count") or 0),
+                    -(s.get("rating") or 0),
+                    s.get("drive_s", s["dist_km"] * 60),
+                )
+            )
 
         yield _ev(
             "done",
